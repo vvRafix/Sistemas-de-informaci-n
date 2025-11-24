@@ -1,511 +1,489 @@
-const express = require("express");
-const cors = require("cors");
-const sqlite3 = require("sqlite3").verbose();
-const path = require("path");
+const express = require('express');
+const sqlite3 = require('sqlite3').verbose();
+const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
+
 const app = express();
+const PORT = 3000;
+const SECRET_KEY = 'secreto_super_seguro';
+
+// Configuración Uploads
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) { cb(null, 'uploads/'); },
+    filename: function (req, file, cb) { cb(null, Date.now() + '-' + file.originalname); }
+});
+const upload = multer({ storage: storage });
 
 app.use(cors());
 app.use(express.json());
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Conexión a SQLite
-const dbPath = path.join(__dirname, "database.sqlite");
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error("Error al conectar con la base de datos:", err.message);
-  } else {
-    console.log("Conectado a la base de datos SQLite");
-  }
-});
-
-// TABLA DE SERVICIOS
-const createServiciosTable = `
-CREATE TABLE IF NOT EXISTS servicios (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  tipo TEXT NOT NULL,
-  descripcion TEXT NOT NULL,
-  estado TEXT NOT NULL,
-  fechaIngreso TEXT NOT NULL,
-  fechaEntrega TEXT
-);
-`;
-db.run(createServiciosTable, (err) => {
-  if (err) {
-    console.error("Error al crear la tabla de servicios:", err.message);
-  }
-});
-
-// TABLA DE SERVICIOS BORRADOS
-const createServiciosBorradosTable = `
-CREATE TABLE IF NOT EXISTS servicios_borrados (
-  id_borrado INTEGER PRIMARY KEY AUTOINCREMENT,
-  id_original INTEGER,
-  tipo TEXT NOT NULL,
-  descripcion TEXT NOT NULL,
-  estado TEXT NOT NULL,
-  fechaIngreso TEXT NOT NULL,
-  fechaEntrega TEXT
-);
-`;
-db.run(createServiciosBorradosTable, (err) => {
-  if (err) {
-    console.error("Error al crear la tabla de servicios_borrados:", err.message);
-  }
-});
-
-// Asegurar columna fecha_borrado en servicios_borrados
-db.run("ALTER TABLE servicios_borrados ADD COLUMN fecha_borrado TEXT", (err) => {
-  // Si ya existe la columna, sqlite lanzará un error que ignoramos
-});
-
-// Simulación de base de datos en memoria
-let productos = [
-  { id: 1, nombre: "Cable eléctrico", stock: 50 },
-  { id: 2, nombre: "Interruptor", stock: 30 },
-  { id: 3, nombre: "Enchufe", stock: 20 }
-];
-
-// Obtener todos los productos
-app.get("/productos", (req, res) => {
-  res.json(productos);
-});
-
-// Agregar un producto
-app.post("/productos", (req, res) => {
-  const { nombre, stock } = req.body;
-  if (!nombre || stock == null) {
-    return res.status(400).json({ error: "Faltan datos" });
-  }
-  const nuevoProducto = {
-    id: productos.length ? productos[productos.length - 1].id + 1 : 1,
-    nombre,
-    stock: Number(stock)
-  };
-  productos.push(nuevoProducto);
-  res.status(201).json(nuevoProducto);
-});
-
-// Eliminar un producto
-app.delete("/productos/:id", (req, res) => {
-  const id = parseInt(req.params.id);
-  const index = productos.findIndex(p => p.id === id);
-  if (index === -1) {
-    return res.status(404).json({ error: "Producto no encontrado" });
-  }
-  const eliminado = productos.splice(index, 1);
-  res.json(eliminado[0]);
-});
-
-// Consultar stock de un producto
-app.get("/productos/:id/stock", (req, res) => {
-  const id = parseInt(req.params.id);
-  const producto = productos.find(p => p.id === id);
-  if (!producto) {
-    return res.status(404).json({ error: "Producto no encontrado" });
-  }
-  res.json({ id: producto.id, nombre: producto.nombre, stock: producto.stock });
-});
-
-// Obtener todos los servicios (desde la base de datos)
-app.get("/servicios", (req, res) => {
-  db.all("SELECT * FROM servicios", [], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
+const db = new sqlite3.Database('./database.sqlite', (err) => {
+    if (err) console.error('Error DB:', err.message);
+    else {
+        console.log('Conectado a SQLite.');
+        initializeDatabase();
     }
-    res.json(rows);
-  });
 });
 
-// Registrar un nuevo servicio usando la ID más baja disponible
-app.post("/servicios", (req, res) => {
-  const { tipo, descripcion, estado, fechaIngreso } = req.body;
-  if (!tipo || !descripcion || !estado || !fechaIngreso) {
-    return res.status(400).json({ error: "Faltan datos" });
-  }
-  // Buscar la ID más baja disponible
-  db.all("SELECT id FROM servicios ORDER BY id", [], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ error: err.message });
-    }
-    let nextId = 1;
-    for (let i = 0; i < rows.length; i++) {
-      if (rows[i].id !== i + 1) {
-        nextId = i + 1;
-        break;
-      }
-      nextId = rows.length + 1;
-    }
-    // Insertar el nuevo servicio con la ID calculada
-    const sql = `INSERT INTO servicios (id, tipo, descripcion, estado, fechaIngreso, fechaEntrega) VALUES (?, ?, ?, ?, ?, NULL)`;
-    db.run(sql, [nextId, tipo, descripcion, estado, fechaIngreso], function(err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      db.get("SELECT * FROM servicios WHERE id = ?", [nextId], (err, row) => {
-        if (err) {
-          return res.status(500).json({ error: err.message });
-        }
-        res.status(201).json(row);
-      });
+function initializeDatabase() {
+    db.serialize(() => {
+        // Tablas Base
+        db.run(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, role TEXT)`);
+        // 2. Reportes Técnicos (AMPLIADA SEGÚN FORMATO DE IMAGEN)
+        db.run(`CREATE TABLE IF NOT EXISTS technical_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_date DATE, client_name TEXT, contact_name TEXT, technician_name TEXT, 
+            arrival_time TEXT, departure_time TEXT, equipment_brand TEXT, model TEXT, serial_number TEXT, 
+            battery_info TEXT, hour_meter TEXT, machine_status TEXT, 
+            symptoms TEXT, causes TEXT, solution TEXT, parts_used TEXT, client_notes TEXT, client_contact_info TEXT,
+            created_by_user_id INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`);
+        
+        db.run(`CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+        db.run(`CREATE TABLE IF NOT EXISTS recycle_bin (id INTEGER PRIMARY KEY AUTOINCREMENT, original_id INTEGER, data_json TEXT, deleted_by INTEGER, deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+        db.run(`CREATE TABLE IF NOT EXISTS funds (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount REAL, assigned_by INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+        db.run(`CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, description TEXT, amount REAL, expense_date DATE, status TEXT DEFAULT 'pendiente', receipt_url TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+        db.run(`CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, price REAL, stock INTEGER, category TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+        db.run(`CREATE TABLE IF NOT EXISTS quotes (id INTEGER PRIMARY KEY AUTOINCREMENT, client_name TEXT, quote_date DATE, validity_days INTEGER, total_amount REAL, status TEXT DEFAULT 'revision', created_by INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+        db.run(`CREATE TABLE IF NOT EXISTS quote_items (id INTEGER PRIMARY KEY AUTOINCREMENT, quote_id INTEGER, product_id INTEGER, description TEXT, quantity INTEGER, unit_price REAL, total REAL)`);
+
+        // Usuarios default
+        db.get("SELECT count(*) as count FROM users", (err, row) => {
+            if (row && row.count === 0) {
+                const pass = bcrypt.hashSync('Pelot7E123.1', 8);
+                const stmt = db.prepare("INSERT INTO users (username, password, role) VALUES (?, ?, ?)");
+                stmt.run('Luis Felipe', pass, 'admin');
+                stmt.run('tecnico', pass, 'tecnico');
+                stmt.finalize();
+                console.log("Usuarios iniciales creados.");
+            }
+        });
     });
-  });
+}
+
+const verifyToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader) return res.status(403).json({ message: "Sin token" });
+    const token = authHeader.split(' ')[1];
+    jwt.verify(token, SECRET_KEY, (err, decoded) => {
+        if (err) return res.status(401).json({ message: "Token inválido" });
+        req.user = decoded;
+        next();
+    });
+};
+
+// --- RUTAS ---
+app.post('/login', (req, res) => {
+    const { username, password } = req.body;
+    db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
+        if (!user || !bcrypt.compareSync(password, user.password)) return res.status(401).json({ message: "Credenciales incorrectas" });
+        const token = jwt.sign({ id: user.id, role: user.role, username: user.username }, SECRET_KEY, { expiresIn: '24h' });
+        res.json({ token, role: user.role });
+    });
 });
 
-// Cambiar el estado de un servicio (en la base de datos)
-app.patch("/servicios/:id/estado", (req, res) => {
-  const id = parseInt(req.params.id);
-  const { estado, fechaEntrega } = req.body;
-  db.get("SELECT * FROM servicios WHERE id = ?", [id], (err, servicio) => {
-    if (err || !servicio) {
-      return res.status(404).json({ error: "Servicio no encontrado" });
-    }
-    const nuevoEstado = estado || servicio.estado;
-    const nuevaFechaEntrega = fechaEntrega || servicio.fechaEntrega;
-    db.run(
-      "UPDATE servicios SET estado = ?, fechaEntrega = ? WHERE id = ?",
-      [nuevoEstado, nuevaFechaEntrega, id],
-      function (err) {
-        if (err) {
-          return res.status(500).json({ error: err.message });
+// ==========================================
+// 1. MÓDULO REPORTES TÉCNICOS
+// ==========================================
+app.get('/reports', verifyToken, (req, res) => {
+    let query = `SELECT tr.*, u.username as author_system FROM technical_reports tr LEFT JOIN users u ON tr.created_by_user_id = u.id`;
+    let params = [];
+    if (req.user.role === 'tecnico') { query += ` WHERE tr.created_by_user_id=${req.user.id}`; }
+    query += " ORDER BY tr.created_at DESC";
+    db.all(query, params, (err, rows) => { if(err) return res.status(500).json({error: err.message}); res.json(rows); });
+});
+
+app.post('/reports', verifyToken, (req, res) => {
+    const data = req.body;
+    
+    // SQL con todos los nuevos campos del formulario (report_date, contact_name, etc.)
+    const sql = `
+        INSERT INTO technical_reports (
+            report_date, client_name, contact_name, technician_name, 
+            arrival_time, departure_time, equipment_brand, model, serial_number, 
+            battery_info, hour_meter, machine_status, symptoms, causes, 
+            solution, parts_used, client_notes, client_contact_info, created_by_user_id
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `;
+    
+    // Parámetros para la inserción (deben coincidir con el orden de la SQL)
+    const params = [
+        data.date, data.client, data.contact, data.tech_name,
+        data.arrival, data.departure, data.brand, data.model, data.serial,
+        data.battery, data.hour_meter, data.status, data.symptoms, data.causes,
+        data.solution, data.parts, data.client_notes, data.client_contact, req.user.id
+    ];
+
+    db.run(sql, params, function(err) {
+        if(err) {
+             console.error("Error SQL al guardar reporte:", err);
+             return res.status(500).json({error: "Fallo de DB: " + err.message});
         }
-        db.get("SELECT * FROM servicios WHERE id = ?", [id], (err, row) => {
-          if (err) {
+        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'CREAR_INFORME', `Informe ID ${this.lastID} (Serie: ${data.serial})`]);
+        res.status(201).json({success:true, id: this.lastID});
+    });
+});
+
+app.put('/reports/:id', verifyToken, (req, res) => {
+    const data = req.body;
+    const sql = `UPDATE technical_reports SET report_date=?, client_name=?, contact_name=?, technician_name=?, arrival_time=?, departure_time=?, equipment_brand=?, model=?, serial_number=?, battery_info=?, hour_meter=?, machine_status=?, symptoms=?, causes=?, solution=?, parts_used=?, client_notes=?, client_contact_info=? WHERE id=?`;
+    const params = [data.date, data.client, data.contact, data.tech_name, data.arrival, data.departure, data.brand, data.model, data.serial, data.battery, data.hour_meter, data.status, data.symptoms, data.causes, data.solution, data.parts, data.client_notes, data.client_contact, req.params.id];
+    db.run(sql, params, function(err) {
+        if(err) return res.status(500).json({error: err.message});
+        res.json({success:true});
+    });
+});
+
+app.delete('/reports/:id', verifyToken, (req, res) => {
+    db.get("SELECT * FROM technical_reports WHERE id=?", [req.params.id], (err, item) => {
+        if(!item) return res.status(404).json({error:"No encontrado"});
+        db.run("INSERT INTO recycle_bin (original_id, data_json, deleted_by) VALUES (?,?,?)", [item.id, JSON.stringify(item), req.user.id]);
+        db.run("DELETE FROM technical_reports WHERE id=?", [req.params.id], (err)=>{
+            db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'BORRAR_INFORME', `ID: ${req.params.id}`]);
+            res.json({success:true});
+        });
+    });
+});
+
+// ==========================================
+// 2. MÓDULO HISTORIAL MÁQUINAS (MULTI-SEARCH APLICADO)
+// ==========================================
+// [Actualizar esta única ruta]
+app.get('/machines/suggestions', verifyToken, (req, res) => {
+    const q = req.query.q;
+    if (!q) return res.json([]);
+    
+    // **NUEVA LÓGICA:** Selecciona Cliente, Técnico y Serie
+    const sql = `
+        SELECT DISTINCT serial_number, client_name, technician_name 
+        FROM technical_reports 
+        WHERE serial_number LIKE ? OR client_name LIKE ? OR technician_name LIKE ?
+        LIMIT 5
+    `;
+    const searchParam = `%${q}%`;
+
+    db.all(sql, [searchParam, searchParam, searchParam], (err, rows) => {
+        if (err) return res.status(500).json({error: err.message});
+        // Devuelve el objeto completo para tener contexto en el Frontend
+        res.json(rows);
+    });
+});
+
+app.get('/history/:serial', verifyToken, (req, res) => {
+    // La consulta ahora trae TODAS las columnas que necesita el PDF
+    const sql = `
+        SELECT *
+        FROM technical_reports 
+        WHERE serial_number = ? 
+        ORDER BY report_date DESC
+    `;
+    db.all(sql, [req.params.serial], (err, rows) => { 
+        if(err) return res.status(500).json({error: err.message});
+        res.json(rows);
+    });
+});
+
+// ==========================================
+// 3. MÓDULO FINANZAS (GASTOS)
+// ==========================================
+app.get('/finance/summary', verifyToken, (req, res) => {
+    const userId = req.user.id;
+    db.get("SELECT SUM(amount) as total FROM funds WHERE user_id = ?", [userId], (err, funds) => {
+        db.get("SELECT SUM(amount) as total FROM expenses WHERE user_id = ? AND status != 'rechazado'", [userId], (err, exps) => {
+            res.json({ assigned: funds?.total || 0, spent: exps?.total || 0, balance: (funds?.total || 0) - (exps?.total || 0) });
+        });
+    });
+});
+
+app.get('/finance/admin-overview', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({error: "Acceso denegado"});
+    const sql = `SELECT u.id, u.username, COALESCE((SELECT SUM(amount) FROM funds WHERE user_id = u.id), 0) as total_assigned, COALESCE((SELECT SUM(amount) FROM expenses WHERE user_id = u.id AND status != 'rechazado'), 0) as total_spent FROM users u WHERE u.role != 'admin'`;
+    db.all(sql, [], (err, rows) => {
+        res.json(rows.map(r => ({ ...r, balance: r.total_assigned - r.total_spent })));
+    });
+});
+
+app.post('/finance/funds', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({error: "Acceso denegado"});
+    const { target_user_id, amount } = req.body;
+    if (amount === 0 || !amount) return res.status(400).json({error: "Monto inválido"});
+    db.run("INSERT INTO funds (user_id, amount, assigned_by) VALUES (?,?,?)", [target_user_id, amount, req.user.id], function(err){
+        if(err) return res.status(500).json({error:err.message});
+        const accion = amount > 0 ? 'ASIGNAR_FONDO' : 'DESCONTAR_FONDO';
+        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, accion, `Monto: $${amount} a usuario ID ${target_user_id}`]);
+        res.json({success: true});
+    });
+});
+
+app.post('/expenses', verifyToken, upload.single('receipt'), (req, res) => {
+    const { description, amount, date } = req.body;
+    const receiptUrl = req.file ? `/uploads/${req.file.filename}` : null;
+    if(!amount || amount <= 0) return res.status(400).json({error: "Monto inválido"});
+    
+    const stmt = db.prepare("INSERT INTO expenses (user_id, description, amount, expense_date, receipt_url) VALUES (?,?,?,?,?)");
+    stmt.run(req.user.id, description, amount, date, receiptUrl, function(err){
+        if(err) return res.status(500).json({error: err.message});
+        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'RENDIR_GASTO', `Monto: $${amount}`]);
+        res.json({success: true, id: this.lastID});
+    });
+});
+
+app.get('/expenses', verifyToken, (req, res) => {
+    let sql = `SELECT e.*, u.username FROM expenses e LEFT JOIN users u ON e.user_id = u.id`;
+    let params = [];
+    if (req.user.role === 'tecnico') { sql += " WHERE e.user_id = ?"; params.push(req.user.id); }
+    else if (req.user.role === 'admin' && req.query.user_id) { sql += " WHERE e.user_id = ?"; params.push(req.query.user_id); }
+    sql += " ORDER BY e.expense_date DESC";
+    db.all(sql, params, (err, rows) => res.json(rows));
+});
+
+app.put('/expenses/:id/status', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({error: "Acceso denegado"});
+    db.run("UPDATE expenses SET status = ? WHERE id = ?", [req.body.status, req.params.id], (err) => {
+        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'REVISAR_GASTO', `Estado: ${req.body.status}`]);
+        res.json({success: true});
+    });
+});
+
+// ==========================================
+// 4. MÓDULO INVENTARIO Y COTIZACIONES
+// ==========================================
+app.get('/inventory', verifyToken, (req, res) => db.all("SELECT * FROM inventory ORDER BY name ASC", [], (err, rows) => res.json(rows)));
+
+app.post('/inventory', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
+    const { name, description, price, stock, category } = req.body;
+    db.run("INSERT INTO inventory (name, description, price, stock, category) VALUES (?, ?, ?, ?, ?)", [name, description, price, stock, category], function(err) {
+        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'CREAR_PRODUCTO', `Producto: ${name}`]);
+        res.json({ success: true, id: this.lastID });
+    });
+});
+
+app.put('/inventory/:id', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
+    const { name, description, price, stock, category } = req.body;
+    db.run("UPDATE inventory SET name=?, description=?, price=?, stock=?, category=? WHERE id=?", [name, description, price, stock, category, req.params.id], function(err) {
+        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'EDITAR_PRODUCTO', `ID: ${req.params.id}`]);
+        res.json({ success: true });
+    });
+});
+
+app.delete('/inventory/:id', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
+    db.get("SELECT * FROM inventory WHERE id=?", [req.params.id], (err, item) => {
+        if(!item) return res.status(404).json({error: "No encontrado"});
+        db.run("INSERT INTO recycle_bin (original_id, data_json, deleted_by) VALUES (?,?,?)", [item.id, JSON.stringify(item), req.user.id]);
+        db.run("DELETE FROM inventory WHERE id=?", [req.params.id], (err) => {
+            db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'BORRAR_PRODUCTO', `ID: ${req.params.id}`]);
+            res.json({ success: true });
+        });
+    });
+});
+
+// Cotizaciones (Con transacción segura para ítems)
+app.get('/quotes', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
+    db.all("SELECT q.*, u.username as author FROM quotes q LEFT JOIN users u ON q.created_by = u.id ORDER BY q.created_at DESC", [], (err, rows) => res.json(rows));
+});
+
+app.get('/quotes/:id', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
+    db.get("SELECT * FROM quotes WHERE id=?", [req.params.id], (err, quote) => {
+        if (!quote) return res.status(404).json({error: "No encontrada"});
+        db.all("SELECT * FROM quote_items WHERE quote_id = ?", [req.params.id], (err, items) => res.json({ ...quote, items }));
+    });
+});
+
+app.post('/quotes', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
+    const { client_name, quote_date, validity_days, items, total_amount } = req.body;
+    if (!items || items.length === 0) return res.status(400).json({error: "Sin ítems"});
+
+    db.serialize(() => {
+        db.run("INSERT INTO quotes (client_name, quote_date, validity_days, total_amount, created_by) VALUES (?, ?, ?, ?, ?)", 
+            [client_name, quote_date, validity_days, total_amount, req.user.id], 
+            function(err) {
+                if (err) return res.status(500).json({error: err.message});
+                const quoteId = this.lastID;
+                const stmt = db.prepare("INSERT INTO quote_items (quote_id, product_id, description, quantity, unit_price, total) VALUES (?, ?, ?, ?, ?, ?)");
+                
+                const inserts = items.map(i => new Promise((resolve, reject) => {
+                    stmt.run(quoteId, i.product_id || null, i.description, i.quantity, i.unit_price, (i.quantity * i.unit_price), (err) => {
+                        if(err) reject(err); else resolve();
+                    });
+                }));
+
+                Promise.all(inserts).then(() => {
+                    stmt.finalize();
+                    db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'CREAR_COTIZACION', `ID: ${quoteId}`]);
+                    res.status(201).json({ success: true, id: quoteId });
+                }).catch(e => {
+                    stmt.finalize();
+                    res.status(500).json({ error: "Error items" });
+                });
+            }
+        );
+    });
+});
+
+app.put('/quotes/:id/approve', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
+    const quoteId = req.params.id;
+    
+    db.all("SELECT * FROM quote_items WHERE quote_id = ?", [quoteId], (err, items) => {
+        if(items.length === 0) return res.status(400).json({error: "Cotización vacía"});
+        
+        // Validar Stock
+        const checks = items.map(i => new Promise((resolve, reject) => {
+            if (!i.product_id) return resolve();
+            db.get("SELECT stock, name FROM inventory WHERE id=?", [i.product_id], (err, p) => {
+                if (err) reject(err); else if (!p || p.stock < i.quantity) reject(`Falta stock: ${p?p.name:'?'}`); else resolve();
+            });
+        }));
+
+        Promise.all(checks).then(() => {
+            const stmt = db.prepare("UPDATE inventory SET stock = stock - ? WHERE id = ?");
+            items.forEach(i => { if (i.product_id) stmt.run(i.quantity, i.product_id); });
+            stmt.finalize();
+            db.run("UPDATE quotes SET status = 'aprobada' WHERE id = ?", [quoteId], (err) => {
+                db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'APROBAR_COTIZACION', `ID: ${quoteId}`]);
+                res.json({ success: true });
+            });
+        }).catch(e => res.status(400).json({ error: e }));
+    });
+});
+
+app.put('/quotes/:id/revert', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
+    const quoteId = req.params.id;
+    db.all("SELECT * FROM quote_items WHERE quote_id = ?", [quoteId], (err, items) => {
+        const stmt = db.prepare("UPDATE inventory SET stock = stock + ? WHERE id = ?");
+        items.forEach(i => { if (i.product_id) stmt.run(i.quantity, i.product_id); });
+        stmt.finalize();
+        db.run("UPDATE quotes SET status = 'revision' WHERE id = ?", [quoteId], (err) => {
+            db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'REVERTIR_COTIZACION', `ID: ${quoteId}`]);
+            res.json({ success: true });
+        });
+    });
+});
+
+app.delete('/quotes/:id', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
+    db.run("DELETE FROM quotes WHERE id = ?", [req.params.id], (err) => {
+        db.run("DELETE FROM quote_items WHERE quote_id = ?", [req.params.id]);
+        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'BORRAR_COTIZACION', `ID: ${req.params.id}`]);
+        res.json({ success: true });
+    });
+});
+
+// Admin & Utilidades
+app.get('/users', verifyToken, (req, res) => db.all("SELECT id, username, role FROM users", [], (err, rows) => res.json(rows)));
+app.get('/audit-logs', verifyToken, (req, res) => db.all("SELECT al.*, u.username FROM audit_logs al LEFT JOIN users u ON al.user_id = u.id ORDER BY al.timestamp DESC", [], (err, rows) => res.json(rows)));
+app.get('/recycle-bin', verifyToken, (req, res) => db.all("SELECT rb.*, u.username as deleted_by_user FROM recycle_bin rb LEFT JOIN users u ON rb.deleted_by = u.id ORDER BY rb.deleted_at DESC", [], (err, rows) => res.json(rows.map(r => ({ ...r, data: JSON.parse(r.data_json) })))));
+app.post('/recycle-bin/restore/:id', verifyToken, (req, res) => {
+    db.get("SELECT * FROM recycle_bin WHERE id=?", [req.params.id], (err, item) => {
+        if(!item) return res.status(404).json({error:"No existe"});
+        const d = JSON.parse(item.data_json);
+        // Restaurar genérico
+        if(d.client_name && d.serial_number) {
+             db.run("INSERT INTO technical_reports (id, client_name, machine_model, serial_number, failure_description, repair_details, technician_id, created_at) VALUES (?,?,?,?,?,?,?,?)", [d.id, d.client_name, d.machine_model, d.serial_number, d.failure_description, d.repair_details, d.technician_id, d.created_at]);
+        }
+        db.run("DELETE FROM recycle_bin WHERE id=?", [req.params.id]);
+        res.json({success:true});
+    });
+});
+
+// ADMIN: gestionar usuarios (crear, editar, eliminar)
+app.post('/users', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Acceso denegado" });
+    const { username, password, role } = req.body;
+    if (!username || !password) return res.status(400).json({ error: "Faltan campos" });
+    const userRole = role === 'admin' ? 'admin' : 'tecnico';
+    const hashed = bcrypt.hashSync(password, 8);
+
+    db.run("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", [username, hashed, userRole], function(err) {
+        if (err) {
+            if (err.message && err.message.toLowerCase().includes('unique')) return res.status(400).json({ error: "Usuario ya existe" });
             return res.status(500).json({ error: err.message });
-          }
-          res.json(row);
-        });
-      }
-    );
-  });
-});
-
-// Consultar un servicio específico (desde la base de datos)
-app.get('/servicios/:id', (req, res) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) return res.status(400).json({ error: 'ID inválida' });
-  db.get('SELECT * FROM servicios WHERE id = ?', [id], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!row) return res.status(404).json({ error: 'Servicio no encontrado' });
-    res.json(row);
-  });
-});
-
-// Endpoint de informes: CSV de servicios filtrable por fecha y estado
-// Parámetros: desde (YYYY-MM-DD), hasta (YYYY-MM-DD), estado (texto), preview=true (devuelve JSON en vez de CSV)
-// Endpoint de informes: CSV de servicios borrados en los últimos 30 días (filtrable por fecha original y estado)
-// Parámetros: desde (YYYY-MM-DD), hasta (YYYY-MM-DD), estado (texto), preview=true (devuelve JSON en vez de CSV)
-app.get('/informes/servicios', (req, res) => {
-  const { desde, hasta, estado, preview } = req.query;
-
-  // Query servicios activos
-  const where = [];
-  const params = [];
-  if (desde) { where.push('fechaIngreso >= ?'); params.push(desde); }
-  if (hasta) { where.push('fechaIngreso <= ?'); params.push(hasta); }
-  if (estado) { where.push('estado = ?'); params.push(estado); }
-  let sqlActive = 'SELECT id, tipo, descripcion, estado, fechaIngreso, fechaEntrega FROM servicios';
-  if (where.length) sqlActive += ' WHERE ' + where.join(' AND ');
-  sqlActive += ' ORDER BY fechaIngreso ASC';
-
-  db.all(sqlActive, params, (err, activeRows) => {
-    if (err) return res.status(500).json({ error: err.message });
-
-    // Obtener servicios borrados de los últimos 30 días
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    let sqlBorr = 'SELECT id_borrado, id_original, tipo, descripcion, estado, fechaIngreso, fechaEntrega, fecha_borrado FROM servicios_borrados WHERE fecha_borrado >= ?';
-    const bparams = [thirtyDaysAgo];
-    if (desde) { sqlBorr += ' AND fechaIngreso >= ?'; bparams.push(desde); }
-    if (hasta) { sqlBorr += ' AND fechaIngreso <= ?'; bparams.push(hasta); }
-    if (estado) { sqlBorr += ' AND estado = ?'; bparams.push(estado); }
-    sqlBorr += ' ORDER BY fecha_borrado DESC';
-
-    db.all(sqlBorr, bparams, (err, borrRows) => {
-      if (err) return res.status(500).json({ error: err.message });
-
-      // Normalizar shapes
-      const normalizedActive = activeRows.map(r => ({ id: r.id, tipo: r.tipo, descripcion: r.descripcion, estado: r.estado, fechaIngreso: r.fechaIngreso, fechaEntrega: r.fechaEntrega, fecha_borrado: null, borrada: 0 }));
-      const normalizedBorr = borrRows.map(r => ({ id_borrado: r.id_borrado, id_original: r.id_original, tipo: r.tipo, descripcion: r.descripcion, estado: r.estado, fechaIngreso: r.fechaIngreso, fechaEntrega: r.fechaEntrega, fecha_borrado: r.fecha_borrado, borrada: 1 }));
-
-      const combined = [...normalizedActive, ...normalizedBorr];
-      if (preview === 'true') return res.json(combined);
-
-      // Generar CSV combinada
-      const headers = ['id','id_borrado','id_original','tipo','descripcion','estado','fechaIngreso','fechaEntrega','fecha_borrado','borrada'];
-      const escape = (v) => (v == null ? '' : '"' + String(v).replace(/"/g,'""') + '"');
-      const lines = [headers.join(',')];
-      for (const r of combined) {
-        const row = [r.id || '', r.id_borrado || '', r.id_original || '', r.tipo || '', r.descripcion || '', r.estado || '', r.fechaIngreso || '', r.fechaEntrega || '', r.fecha_borrado || '', r.borrada || 0].map(escape).join(',');
-        lines.push(row);
-      }
-      const csv = lines.join('\n');
-      const filename = `servicios_informe_${new Date().toISOString().slice(0,10)}.csv`;
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.send(csv);
-    });
-  });
-});
-
-// ------------------ COTIZACIONES ------------------
-// Tabla: cotizaciones (id, cliente, items JSON, total, estado, fecha)
-const createCotizacionesTable = `
-CREATE TABLE IF NOT EXISTS cotizaciones (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  cliente TEXT NOT NULL,
-  items TEXT NOT NULL,
-  total REAL NOT NULL,
-  estado TEXT NOT NULL,
-  fecha TEXT NOT NULL
-);
-`;
-db.run(createCotizacionesTable, (err) => {
-  if (err) console.error("Error creando tabla cotizaciones:", err.message);
-});
-
-// Tabla: cotizaciones_borradas (historial de cotizaciones rechazadas)
-const createCotizacionesBorradasTable = `
-CREATE TABLE IF NOT EXISTS cotizaciones_borradas (
-  id_borrado INTEGER PRIMARY KEY AUTOINCREMENT,
-  id_original INTEGER,
-  cliente TEXT NOT NULL,
-  items TEXT NOT NULL,
-  total REAL NOT NULL,
-  estado TEXT NOT NULL,
-  fecha TEXT NOT NULL
-);
-`;
-db.run(createCotizacionesBorradasTable, (err) => {
-  if (err) console.error("Error creando tabla cotizaciones_borradas:", err.message);
-});
-
-// Asegurar columna fecha_borrado en cotizaciones_borradas
-db.run("ALTER TABLE cotizaciones_borradas ADD COLUMN fecha_borrado TEXT", (err) => {
-  // Ignorar errores por columna existente
-});
-
-// Listar cotizaciones
-app.get('/cotizaciones', (req, res) => {
-  db.all('SELECT * FROM cotizaciones ORDER BY id DESC', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    // parse items JSON
-    const parsed = rows.map(r => ({ ...r, items: JSON.parse(r.items) }));
-    res.json(parsed);
-  });
-});
-
-// Crear cotización
-app.post('/cotizaciones', (req, res) => {
-  const { cliente, items, total, fecha } = req.body;
-  if (!cliente || !items || total == null || !fecha) return res.status(400).json({ error: 'Faltan datos' });
-  const sql = 'INSERT INTO cotizaciones (cliente, items, total, estado, fecha) VALUES (?, ?, ?, ?, ?)';
-  db.run(sql, [cliente, JSON.stringify(items), total, 'pendiente', fecha], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    db.get('SELECT * FROM cotizaciones WHERE id = ?', [this.lastID], (err, row) => {
-      if (err) return res.status(500).json({ error: err.message });
-      row.items = JSON.parse(row.items);
-      res.status(201).json(row);
-    });
-  });
-});
-
-// Cambiar estado de cotización
-app.patch('/cotizaciones/:id/estado', (req, res) => {
-  const id = parseInt(req.params.id);
-  const { estado } = req.body;
-  if (!estado) return res.status(400).json({ error: 'Falta estado' });
-  // Si la nueva estado es 'rechazada', mover la cotización a cotizaciones_borradas
-  if (estado === 'rechazada') {
-    db.get('SELECT * FROM cotizaciones WHERE id = ?', [id], (err, row) => {
-      if (err || !row) return res.status(404).json({ error: 'Cotización no encontrada' });
-      const sqlInsert = 'INSERT INTO cotizaciones_borradas (id_original, cliente, items, total, estado, fecha) VALUES (?, ?, ?, ?, ?, ?)';
-      const fechaBorrado = new Date().toISOString();
-      const sqlInsertWithFecha = 'INSERT INTO cotizaciones_borradas (id_original, cliente, items, total, estado, fecha, fecha_borrado) VALUES (?, ?, ?, ?, ?, ?, ?)';
-      db.run(sqlInsertWithFecha, [row.id, row.cliente, row.items, row.total, 'rechazada', row.fecha, fechaBorrado], function(err) {
-        if (err) return res.status(500).json({ error: err.message });
-        db.run('DELETE FROM cotizaciones WHERE id = ?', [id], function(err) {
-          if (err) return res.status(500).json({ error: err.message });
-          // devolver el registro movido
-          db.get('SELECT * FROM cotizaciones_borradas WHERE id_borrado = ?', [this.lastID], (err, moved) => {
-            if (err) return res.status(500).json({ error: err.message });
-            moved.items = JSON.parse(moved.items);
-            res.json({ moved });
-          });
-        });
-      });
-    });
-    return;
-  }
-
-  // Para otros estados solo actualizar
-  db.run('UPDATE cotizaciones SET estado = ? WHERE id = ?', [estado, id], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    db.get('SELECT * FROM cotizaciones WHERE id = ?', [id], (err, row) => {
-      if (err) return res.status(500).json({ error: err.message });
-      row.items = JSON.parse(row.items);
-      res.json(row);
-    });
-  });
-});
-
-// Listar cotizaciones borradas
-app.get('/cotizaciones-borradas', (req, res) => {
-  db.all('SELECT * FROM cotizaciones_borradas ORDER BY id_borrado DESC', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    const parsed = rows.map(r => ({ ...r, items: JSON.parse(r.items) }));
-    res.json(parsed);
-  });
-});
-
-// Listar servicios borrados
-app.get('/servicios-borrados', (req, res) => {
-  db.all('SELECT * FROM servicios_borrados ORDER BY id_borrado DESC', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
-});
-
-// Endpoint de informes para cotizaciones: incluye cotizaciones activas y cotizaciones borradas en los últimos 30 días
-// Parámetros: desde, hasta (filtrado por fecha original), estado, preview=true
-app.get('/informes/cotizaciones', (req, res) => {
-  const { desde, hasta, estado, preview } = req.query;
-  // Primero obtenemos cotizaciones activas (tabla cotizaciones)
-  const where = [];
-  const params = [];
-  if (desde) { where.push('fecha >= ?'); params.push(desde); }
-  if (hasta) { where.push('fecha <= ?'); params.push(hasta); }
-  if (estado) { where.push('estado = ?'); params.push(estado); }
-  let sqlActive = 'SELECT id, cliente, items, total, estado, fecha, NULL as fecha_borrado, 0 as borrada FROM cotizaciones';
-  if (where.length) sqlActive += ' WHERE ' + where.join(' AND ');
-
-  db.all(sqlActive, params, (err, activeRows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    // Luego obtenemos cotizaciones_borradas de los últimos 30 días
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    let sqlBorr = 'SELECT id_borrado, id_original, cliente, items, total, estado, fecha, fecha_borrado FROM cotizaciones_borradas WHERE fecha_borrado >= ?';
-    const bparams = [thirtyDaysAgo];
-    if (desde) { sqlBorr += ' AND fecha >= ?'; bparams.push(desde); }
-    if (hasta) { sqlBorr += ' AND fecha <= ?'; bparams.push(hasta); }
-    if (estado) { sqlBorr += ' AND estado = ?'; bparams.push(estado); }
-    db.all(sqlBorr, bparams, (err, borrRows) => {
-      if (err) return res.status(500).json({ error: err.message });
-      // Normalizar borrRows to have same shape as activeRows
-      const normalizedBorr = borrRows.map(r => ({ id: r.id_original, cliente: r.cliente, items: JSON.parse(r.items), total: r.total, estado: r.estado, fecha: r.fecha, fecha_borrado: r.fecha_borrado, borrada: 1 }));
-      const normalizedActive = activeRows.map(r => ({ id: r.id, cliente: r.cliente, items: JSON.parse(r.items), total: r.total, estado: r.estado, fecha: r.fecha, fecha_borrado: null, borrada: 0 }));
-      // Añadir representación legible de items: "descripcion: $precio, ..."
-      const formatItems = (items) => {
-        try {
-          if (!items) return '';
-          // items expected to be array of { descripcion, precio } or similar
-          if (Array.isArray(items)) return items.map(it => `${it.descripcion}: $${it.precio}`).join(', ');
-          // if items is an object/string, try to handle gracefully
-          if (typeof items === 'string') {
-            const parsed = JSON.parse(items);
-            if (Array.isArray(parsed)) return parsed.map(it => `${it.descripcion}: $${it.precio}`).join(', ');
-          }
-          return '';
-        } catch(e) {
-          return '';
         }
-      };
-      // attach items_formatted
-      for (const r of normalizedBorr) r.items_formatted = formatItems(r.items);
-      for (const r of normalizedActive) r.items_formatted = formatItems(r.items);
-      const combined = [...normalizedActive, ...normalizedBorr];
-      if (preview === 'true') return res.json(combined);
-      // Generar CSV
-      const headers = ['id','cliente','items_formatted','total','estado','fecha','fecha_borrado','borrada'];
-      const escape = (v) => {
-        if (v == null) return '';
-        const s = typeof v === 'string' ? v.replace(/"/g, '""') : String(v);
-        return '"' + s + '"';
-      };
-      const lines = [headers.join(',')];
-      for (const r of combined) {
-        const itemsStr = (r.items_formatted || '').replace(/"/g,'""');
-        const row = [r.id, r.cliente, itemsStr, r.total, r.estado, r.fecha, r.fecha_borrado || '', r.borrada].map(escape).join(',');
-        lines.push(row);
-      }
-      const csv = lines.join('\n');
-      const filename = `cotizaciones_${new Date().toISOString().slice(0,10)}.csv`;
-      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      res.send(csv);
+        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'CREAR_USUARIO', `ID: ${this.lastID} - ${username}`]);
+        res.status(201).json({ success: true, id: this.lastID });
     });
-  });
 });
 
-// Mover servicio a servicios_borrados (papelera) con motivo y fecha_borrado
-app.delete('/servicios/:id', (req, res) => {
-  const id = parseInt(req.params.id);
-  const motivo = req.query.motivo || 'borrado';
-  db.get('SELECT * FROM servicios WHERE id = ?', [id], (err, row) => {
-    if (err || !row) return res.status(404).json({ error: 'Servicio no encontrado' });
-    const fechaBorrado = new Date().toISOString();
-    const sqlInsertWithFecha = 'INSERT INTO servicios_borrados (id_original, tipo, descripcion, estado, fechaIngreso, fechaEntrega, fecha_borrado) VALUES (?, ?, ?, ?, ?, ?, ?)';
-    db.run(sqlInsertWithFecha, [row.id, row.tipo, row.descripcion, motivo, row.fechaIngreso, row.fechaEntrega, fechaBorrado], function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      db.run('DELETE FROM servicios WHERE id = ?', [id], function(err) {
+app.put('/users/:id', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Acceso denegado" });
+    const id = req.params.id;
+    const { username, password, role } = req.body;
+    if (!username && !password && !role) return res.status(400).json({ error: "Nada para actualizar" });
+
+    // Construir SET dinámico
+    const fields = [];
+    const params = [];
+    if (username) { fields.push("username = ?"); params.push(username); }
+    if (password) { fields.push("password = ?"); params.push(bcrypt.hashSync(password, 8)); }
+    if (role) { fields.push("role = ?"); params.push(role === 'admin' ? 'admin' : 'tecnico'); }
+    params.push(id);
+
+    const sql = `UPDATE users SET ${fields.join(', ')} WHERE id = ?`;
+    db.run(sql, params, function(err) {
+        if (err) {
+            if (err.message && err.message.toLowerCase().includes('unique')) return res.status(400).json({ error: "Usuario ya existe" });
+            return res.status(500).json({ error: err.message });
+        }
+        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'EDITAR_USUARIO', `ID: ${id}`]);
+        res.json({ success: true });
+    });
+});
+
+app.delete('/users/:id', verifyToken, (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Acceso denegado" });
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
+    if (id === req.user.id) return res.status(400).json({ error: "No puedes eliminarte a ti mismo" });
+
+    db.get("SELECT * FROM users WHERE id = ?", [id], (err, user) => {
         if (err) return res.status(500).json({ error: err.message });
-        db.get('SELECT * FROM servicios_borrados WHERE id_borrado = ?', [this.lastID], (err, moved) => {
-          if (err) return res.status(500).json({ error: err.message });
-          res.json({ moved });
-        });
-      });
+        if (!user) return res.status(404).json({ error: "No encontrado" });
+
+        if (user.role === 'admin') {
+            db.get("SELECT COUNT(*) as cnt FROM users WHERE role = 'admin'", [], (err, row) => {
+                if (err) return res.status(500).json({ error: err.message });
+                if (row && row.cnt <= 1) return res.status(400).json({ error: "No se puede eliminar el último admin" });
+                proceedDelete(user);
+            });
+        } else proceedDelete(user);
+
+        function proceedDelete(user) {
+            db.run("INSERT INTO recycle_bin (original_id, data_json, deleted_by) VALUES (?,?,?)", [user.id, JSON.stringify(user), req.user.id], (err) => {
+                if (err) return res.status(500).json({ error: err.message });
+                db.run("DELETE FROM users WHERE id = ?", [id], function(err) {
+                    if (err) return res.status(500).json({ error: err.message });
+                    db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'BORRAR_USUARIO', `ID: ${id} - ${user.username}`]);
+                    res.json({ success: true });
+                });
+            });
+        }
     });
-  });
 });
-
-// Eliminar definitivamente una cotización borrada
-app.delete('/cotizaciones-borradas/:id_borrado', (req, res) => {
-  const id_borrado = parseInt(req.params.id_borrado);
-  db.get('SELECT * FROM cotizaciones_borradas WHERE id_borrado = ?', [id_borrado], (err, row) => {
-    if (err || !row) return res.status(404).json({ error: 'Cotización borrada no encontrada' });
-    db.run('DELETE FROM cotizaciones_borradas WHERE id_borrado = ?', [id_borrado], function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      res.json({ eliminado: true, ...row });
+// Reset
+app.get('/emergency-reset', (req, res) => {
+    db.serialize(() => {
+        db.run("DROP TABLE IF EXISTS users"); db.run("DROP TABLE IF EXISTS technical_reports"); 
+        db.run("DROP TABLE IF EXISTS audit_logs"); db.run("DROP TABLE IF EXISTS recycle_bin"); 
+        db.run("DROP TABLE IF EXISTS funds"); db.run("DROP TABLE IF EXISTS expenses");
+        db.run("DROP TABLE IF EXISTS quotes"); db.run("DROP TABLE IF EXISTS quote_items");
+        db.run("DROP TABLE IF EXISTS inventory");
+        initializeDatabase();
+        res.json({ message: "Reset Completo V7 (Final SQLite)" });
     });
-  });
 });
 
-
-// Eliminar definitivamente un servicio borrado
-app.delete("/servicios-borrados/:id_borrado", (req, res) => {
-  const id_borrado = parseInt(req.params.id_borrado);
-  db.get("SELECT * FROM servicios_borrados WHERE id_borrado = ?", [id_borrado], (err, row) => {
-    if (err || !row) {
-      return res.status(404).json({ error: "Servicio borrado no encontrado" });
-    }
-    db.run("DELETE FROM servicios_borrados WHERE id_borrado = ?", [id_borrado], function (err) {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-      res.json({ eliminado: true, ...row });
-    });
-  });
-});
-
-// Restaurar un servicio desde la papelera a la tabla servicios
-app.post('/servicios-borrados/:id_borrado/restore', (req, res) => {
-  const id_borrado = parseInt(req.params.id_borrado);
-  db.get('SELECT * FROM servicios_borrados WHERE id_borrado = ?', [id_borrado], (err, row) => {
-    if (err || !row) return res.status(404).json({ error: 'Servicio borrado no encontrado' });
-    // Insertar en servicios usando la misma estructura; no forzamos id para evitar conflictos
-    const sql = 'INSERT INTO servicios (tipo, descripcion, estado, fechaIngreso, fechaEntrega) VALUES (?, ?, ?, ?, ?)';
-    db.run(sql, [row.tipo, row.descripcion, row.estado, row.fechaIngreso, row.fechaEntrega], function(err) {
-      if (err) return res.status(500).json({ error: err.message });
-      // Una vez restaurado, eliminar de servicios_borrados
-      db.run('DELETE FROM servicios_borrados WHERE id_borrado = ?', [id_borrado], function(err) {
-        if (err) return res.status(500).json({ error: err.message });
-        // devolver el nuevo registro restaurado
-        db.get('SELECT * FROM servicios WHERE id = ?', [this.lastID], (err, restored) => {
-          if (err) return res.status(500).json({ error: err.message });
-          res.json({ restored });
-        });
-      });
-    });
-  });
-});
-
-app.listen(3000, () => {
-  console.log("Servidor corriendo en http://localhost:3000");
-});
-
+app.listen(PORT, () => console.log(`Servidor listo en http://localhost:${PORT}`));

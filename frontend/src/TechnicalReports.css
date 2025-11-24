@@ -1,0 +1,51 @@
+.reports-container {
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.report-form {
+  background-color: #f9f9f9;
+  padding: 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.report-form input, .report-form textarea {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.report-card {
+  border: 1px solid #e1e1e1;
+  padding: 15px;
+  margin-bottom: 10px;
+  border-radius: 8px;
+  background: white;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.8em;
+  background-color: #e0f7fa;
+  color: #006064;
+}
+
+button {
+  background-color: #007bff;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: #0056b3;
+}
