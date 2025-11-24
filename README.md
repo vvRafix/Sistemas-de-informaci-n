@@ -11,12 +11,14 @@ Repositorio del proyecto "Seven Electric" (aplicación para gestión de servicio
 - Node.js (v14+)
 - npm
 - Git
+  
+## Correr los comandos en una terminal de la carpeta designada
 
 ## Levantar backend
 ```powershell
 cd backend
 npm install
-node server.js
+npm start
 ```
 El servidor corre en `http://localhost:3000`.
 
