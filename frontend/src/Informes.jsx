@@ -17,18 +17,18 @@ function Informes() {
       if (estado) params.append('estado', estado);
       params.append('preview', 'true');
       if (entidad === 'servicios') {
-        const res = await fetch(`http://localhost:3000/informes/servicios?${params.toString()}`);
+        const res = await fetch(`https://sevenelectricmanage.onrender.com/informes/servicios?${params.toString()}`);
         if (!res.ok) throw new Error('Error al obtener previsualización');
         const data = await res.json();
         setPreview(data);
       } else if (entidad === 'cotizaciones') {
-        const res = await fetch(`http://localhost:3000/informes/cotizaciones?${params.toString()}`);
+        const res = await fetch(`https://sevenelectricmanage.onrender.com/informes/cotizaciones?${params.toString()}`);
         if (!res.ok) throw new Error('Error al obtener previsualización');
         const data = await res.json();
         setPreview(data);
       } else {
-        const res1 = await fetch(`http://localhost:3000/informes/servicios?${params.toString()}`);
-        const res2 = await fetch(`http://localhost:3000/informes/cotizaciones?${params.toString()}`);
+        const res1 = await fetch(`https://sevenelectricmanage.onrender.com/informes/servicios?${params.toString()}`);
+        const res2 = await fetch(`https://sevenelectricmanage.onrender.com/informes/cotizaciones?${params.toString()}`);
         if (!res1.ok || !res2.ok) throw new Error('Error al obtener previsualización');
         const d1 = await res1.json();
         const d2 = await res2.json();
@@ -47,13 +47,13 @@ function Informes() {
     if (hasta) params.append('hasta', hasta);
     if (estado) params.append('estado', estado);
     if (entidad === 'servicios') {
-      window.open(`http://localhost:3000/informes/servicios?${params.toString()}`, '_blank');
+      window.open(`https://sevenelectricmanage.onrender.com/informes/servicios?${params.toString()}`, '_blank');
     } else if (entidad === 'cotizaciones') {
-      window.open(`http://localhost:3000/informes/cotizaciones?${params.toString()}`, '_blank');
+      window.open(`https://sevenelectricmanage.onrender.com/informes/cotizaciones?${params.toString()}`, '_blank');
     } else {
       // Abrir ambos en pestañas separadas
-      window.open(`http://localhost:3000/informes/servicios?${params.toString()}`, '_blank');
-      window.open(`http://localhost:3000/informes/cotizaciones?${params.toString()}`, '_blank');
+      window.open(`https://sevenelectricmanage.onrender.com/informes/servicios?${params.toString()}`, '_blank');
+      window.open(`https://sevenelectricmanage.onrender.com/informes/cotizaciones?${params.toString()}`, '_blank');
     }
   };
 

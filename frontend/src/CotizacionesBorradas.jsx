@@ -6,7 +6,7 @@ function CotizacionesBorradas() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch('http://localhost:3000/cotizaciones-borradas')
+    fetch('https://sevenelectricmanage.onrender.com/cotizaciones-borradas')
       .then(res => { if (!res.ok) throw new Error('Error al cargar cotizaciones borradas'); return res.json(); })
       .then(data => { setBorradas(data); setLoading(false); })
       .catch(err => { setError(err.message); setLoading(false); });
@@ -15,7 +15,7 @@ function CotizacionesBorradas() {
   const handleDelete = async (id_borrado) => {
     if (!window.confirm('Eliminar definitivamente esta cotización?')) return;
     try {
-      const res = await fetch(`http://localhost:3000/cotizaciones-borradas/${id_borrado}`, { method: 'DELETE' });
+      const res = await fetch(`https://sevenelectricmanage.onrender.com/cotizaciones-borradas/${id_borrado}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Error al eliminar definitivamente');
       setBorradas(prev => prev.filter(c => c.id_borrado !== id_borrado));
     } catch (err) { alert(err.message); }

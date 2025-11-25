@@ -17,9 +17,9 @@ const Login = ({ onLoginSuccess }) => {
     setLoading(true);
 
     try {
-      console.log("2. Enviando datos a http://localhost:3000/login"); // CHIVATO 2
+      console.log("2. Enviando datos a https://sevenelectricmanage.onrender.com/login"); // CHIVATO 2
       
-      const res = await fetch('http://localhost:3000/login', {
+      const res = await fetch('https://sevenelectricmanage.onrender.com/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),

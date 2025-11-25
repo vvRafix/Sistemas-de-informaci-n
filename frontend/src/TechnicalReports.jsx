@@ -23,7 +23,7 @@ export default function TechnicalReports() {
 
     const fetchReports = async () => {
         try {
-            const res = await fetch("http://localhost:3000/reports", {
+            const res = await fetch("https://sevenelectricmanage.onrender.com/reports", {
                 headers: { Authorization: `Bearer ${getToken()}` }
             });
             if (res.ok) setReports(await res.json());
@@ -32,7 +32,7 @@ export default function TechnicalReports() {
 
     const fetchUsers = async () => {
         try {
-            const res = await fetch("http://localhost:3000/users", {
+            const res = await fetch("https://sevenelectricmanage.onrender.com/users", {
                 headers: { Authorization: `Bearer ${getToken()}` }
             });
             if (res.ok) setUsers(await res.json());
@@ -54,7 +54,7 @@ export default function TechnicalReports() {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        const url = editingId ? `http://localhost:3000/reports/${editingId}` : "http://localhost:3000/reports";
+        const url = editingId ? `https://sevenelectricmanage.onrender.com/reports/${editingId}` : "https://sevenelectricmanage.onrender.com/reports";
         const method = editingId ? "PUT" : "POST";
 
         // Asegurar valores por defecto para evitar nulls en la BD
@@ -110,7 +110,7 @@ export default function TechnicalReports() {
 
     const handleDelete = async (id) => {
         if (!confirm("¿Borrar informe?")) return;
-        const res = await fetch(`http://localhost:3000/reports/${id}`, {
+        const res = await fetch(`https://sevenelectricmanage.onrender.com/reports/${id}`, {
             method: "DELETE",
             headers: { Authorization: `Bearer ${getToken()}` }
         });

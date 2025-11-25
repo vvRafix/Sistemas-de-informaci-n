@@ -94,7 +94,7 @@ export default function MachineHistory() {
         if (value.length > 1) {
             try {
                 // Llama al backend (que ahora busca por Cliente, Técnico y Serie)
-                const res = await fetch(`http://localhost:3000/machines/suggestions?q=${value}`, {
+                const res = await fetch(`https://sevenelectricmanage.onrender.com/machines/suggestions?q=${value}`, {
                     headers: { 'Authorization': `Bearer ${getToken()}` }
                 });
                 if (res.ok) {
@@ -122,7 +122,7 @@ export default function MachineHistory() {
         setLoading(true);
         setHistory([]);
         try {
-            const res = await fetch(`http://localhost:3000/history/${serial}`, {
+            const res = await fetch(`https://sevenelectricmanage.onrender.com/history/${serial}`, {
                 headers: { 'Authorization': `Bearer ${getToken()}` }
             });
             if (res.ok) {

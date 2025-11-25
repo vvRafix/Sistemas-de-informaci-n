@@ -17,12 +17,12 @@ export default function Quotes() {
     useEffect(() => { fetchQuotes(); fetchInventory(); }, []);
 
     const fetchQuotes = async () => {
-        const res = await fetch('http://localhost:3000/quotes', { headers: { 'Authorization': `Bearer ${getToken()}` } });
+        const res = await fetch('https://sevenelectricmanage.onrender.com/quotes', { headers: { 'Authorization': `Bearer ${getToken()}` } });
         if (res.ok) setQuotes(await res.json());
     };
 
     const fetchInventory = async () => {
-        const res = await fetch('http://localhost:3000/inventory', { headers: { 'Authorization': `Bearer ${getToken()}` } });
+        const res = await fetch('https://sevenelectricmanage.onrender.com/inventory', { headers: { 'Authorization': `Bearer ${getToken()}` } });
         if (res.ok) setInventory(await res.json());
     };
 
@@ -65,7 +65,7 @@ export default function Quotes() {
             total_amount: calculateTotal(),
             items: items.map(i => ({ product_id: i.product_id, description: i.desc, quantity: i.qty, unit_price: i.price }))
         };
-        const res = await fetch('http://localhost:3000/quotes', {
+        const res = await fetch('https://sevenelectricmanage.onrender.com/quotes', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` },
             body: JSON.stringify(payload)
@@ -75,20 +75,20 @@ export default function Quotes() {
 
     const handleDelete = async (id) => {
         if(!confirm("¿Borrar definitivamente?")) return;
-        await fetch(`http://localhost:3000/quotes/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${getToken()}` } });
+        await fetch(`https://sevenelectricmanage.onrender.com/quotes/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${getToken()}` } });
         fetchQuotes();
     };
 
     const handleApprove = async (id) => {
         if(!confirm("Se descontará stock. ¿Seguro?")) return;
-        const res = await fetch(`http://localhost:3000/quotes/${id}/approve`, { method: 'PUT', headers: { 'Authorization': `Bearer ${getToken()}` } });
+        const res = await fetch(`https://sevenelectricmanage.onrender.com/quotes/${id}/approve`, { method: 'PUT', headers: { 'Authorization': `Bearer ${getToken()}` } });
         if(res.ok) { alert("✅ Aprobada"); fetchQuotes(); fetchInventory(); }
         else { const err = await res.json(); alert("Error: " + err.error); }
     };
 
     const handleRevert = async (id) => {
         if(!confirm("¿Revertir aprobación? El stock volverá al inventario.")) return;
-        const res = await fetch(`http://localhost:3000/quotes/${id}/revert`, { method: 'PUT', headers: { 'Authorization': `Bearer ${getToken()}` } });
+        const res = await fetch(`https://sevenelectricmanage.onrender.com/quotes/${id}/revert`, { method: 'PUT', headers: { 'Authorization': `Bearer ${getToken()}` } });
         if(res.ok) { alert("↺ Revertida a Revisión"); fetchQuotes(); fetchInventory(); }
     };
 

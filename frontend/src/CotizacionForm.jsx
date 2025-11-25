@@ -27,7 +27,7 @@ function CotizacionForm({ onCreated }) {
     try {
       // convertir precios a número antes de enviar
       const payloadItems = items.map(it => ({ descripcion: it.descripcion, precio: Number(it.precio) || 0 }));
-      const res = await fetch('http://localhost:3000/cotizaciones', {
+      const res = await fetch('https://sevenelectricmanage.onrender.com/cotizaciones', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cliente, items: payloadItems, total: calcularTotal(), fecha })

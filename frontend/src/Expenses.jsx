@@ -36,26 +36,26 @@ export default function Expenses() {
 
     const fetchMyData = async () => {
         const headers = { Authorization: `Bearer ${getToken()}` };
-        const resExp = await fetch("http://localhost:3000/expenses", { headers });
-        const resSum = await fetch("http://localhost:3000/finance/summary", { headers });
+        const resExp = await fetch("https://sevenelectricmanage.onrender.com/expenses", { headers });
+        const resSum = await fetch("https://sevenelectricmanage.onrender.com/finance/summary", { headers });
         if (resExp.ok) setExpenses(await resExp.json());
         if (resSum.ok) setSummary(await resSum.json());
     };
 
     const fetchAdminOverview = async () => {
         const headers = { Authorization: `Bearer ${getToken()}` };
-        const res = await fetch("http://localhost:3000/finance/admin-overview", { headers });
+        const res = await fetch("https://sevenelectricmanage.onrender.com/finance/admin-overview", { headers });
         if (res.ok) setTechOverview(await res.json());
     };
 
     const fetchUsers = async () => {
-        const res = await fetch("http://localhost:3000/users", { headers: { Authorization: `Bearer ${getToken()}` } });
+        const res = await fetch("https://sevenelectricmanage.onrender.com/users", { headers: { Authorization: `Bearer ${getToken()}` } });
         if (res.ok) setUsers(await res.json());
     };
 
     const fetchTechDetail = async (userId, username) => {
         const headers = { Authorization: `Bearer ${getToken()}` };
-        const res = await fetch(`http://localhost:3000/expenses?user_id=${userId}`, { headers });
+        const res = await fetch(`https://sevenelectricmanage.onrender.com/expenses?user_id=${userId}`, { headers });
         if (res.ok) {
             setExpenses(await res.json());
             setSelectedTech({ id: userId, name: username });
@@ -82,7 +82,7 @@ export default function Expenses() {
         if (file) formData.append("receipt", file);
 
         try {
-            const res = await fetch("http://localhost:3000/expenses", {
+            const res = await fetch("https://sevenelectricmanage.onrender.com/expenses", {
                 method: "POST",
                 headers: { Authorization: `Bearer ${getToken()}` },
                 body: formData
@@ -125,7 +125,7 @@ export default function Expenses() {
 
     // 4. Enviar al Backend (El backend debe aceptar negativos para que esto funcione)
     try {
-        const res = await fetch("http://localhost:3000/finance/funds", {
+        const res = await fetch("https://sevenelectricmanage.onrender.com/finance/funds", {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
             body: JSON.stringify({ target_user_id: fundUser, amount: finalAmount })
@@ -145,7 +145,7 @@ export default function Expenses() {
     };
 
     const handleStatus = async (id, status) => {
-        await fetch(`http://localhost:3000/expenses/${id}/status`, {
+        await fetch(`https://sevenelectricmanage.onrender.com/expenses/${id}/status`, {
             method: "PUT",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
             body: JSON.stringify({ status })
@@ -323,7 +323,7 @@ export default function Expenses() {
                             <div key={exp.id} style={{...styles.card, borderLeft: `5px solid ${getStatusColor(exp.status)}`, display:'flex', justifyContent:'space-between', alignItems:'center'}}>
                                 <div>
                                     <div style={{fontWeight:'bold', fontSize:'1.1rem', color:'#333'}}>{exp.description}</div>
-                                    {exp.receipt_url && <a href={`http://localhost:3000${exp.receipt_url}`} target="_blank" rel="noreferrer" style={{fontSize:'12px', color:'#2563eb'}}>Ver Boleta 📎</a>}
+                                    {exp.receipt_url && <a href={`https://sevenelectricmanage.onrender.com${exp.receipt_url}`} target="_blank" rel="noreferrer" style={{fontSize:'12px', color:'#2563eb'}}>Ver Boleta 📎</a>}
                                 </div>
                                 <div style={{textAlign:'right'}}>
                                     <div style={{fontSize:'1.2rem', fontWeight:'bold', color:'#333'}}>${exp.amount.toLocaleString()}</div>

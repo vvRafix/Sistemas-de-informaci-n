@@ -25,7 +25,7 @@ export default function AdminPanel() {
     const fetchAuditLogs = async () => {
         setLoading(true);
         try {
-            const res = await fetch("http://localhost:3000/audit-logs", {
+            const res = await fetch("https://sevenelectricmanage.onrender.com/audit-logs", {
                 headers: { Authorization: `Bearer ${getToken()}` }
             });
             if (res.ok) setLogs(await res.json());
@@ -40,7 +40,7 @@ export default function AdminPanel() {
     const fetchRecycleBin = async () => {
         setLoading(true);
         try {
-            const res = await fetch("http://localhost:3000/recycle-bin", {
+            const res = await fetch("https://sevenelectricmanage.onrender.com/recycle-bin", {
                 headers: { Authorization: `Bearer ${getToken()}` }
             });
             if (res.ok) setDeletedItems(await res.json());
@@ -54,7 +54,7 @@ export default function AdminPanel() {
     const handleRestore = async (id) => {
         if (!confirm("¿Restaurar este reporte?")) return;
         try {
-            const res = await fetch(`http://localhost:3000/recycle-bin/restore/${id}`, {
+            const res = await fetch(`https://sevenelectricmanage.onrender.com/recycle-bin/restore/${id}`, {
                 method: "POST",
                 headers: { Authorization: `Bearer ${getToken()}` }
             });
@@ -74,7 +74,7 @@ export default function AdminPanel() {
     const fetchUsers = async () => {
         setLoading(true);
         try {
-            const res = await fetch("http://localhost:3000/users", {
+            const res = await fetch("https://sevenelectricmanage.onrender.com/users", {
                 headers: { Authorization: `Bearer ${getToken()}` }
             });
             if (res.ok) {
@@ -116,8 +116,8 @@ export default function AdminPanel() {
 
         try {
             const url = editingUser
-                ? `http://localhost:3000/users/${editingUser.id}`
-                : `http://localhost:3000/users`;
+                ? `https://sevenelectricmanage.onrender.com/users/${editingUser.id}`
+                : `https://sevenelectricmanage.onrender.com/users`;
             const method = editingUser ? "PUT" : "POST";
 
             const payload = { username: userForm.username, role: userForm.role };
@@ -154,7 +154,7 @@ export default function AdminPanel() {
     const handleDeleteUser = async (id) => {
         if (!confirm("¿Eliminar este usuario? Esta acción es irreversible.")) return;
         try {
-            const res = await fetch(`http://localhost:3000/users/${id}`, {
+            const res = await fetch(`https://sevenelectricmanage.onrender.com/users/${id}`, {
                 method: "DELETE",
                 headers: { Authorization: `Bearer ${getToken()}` }
             });

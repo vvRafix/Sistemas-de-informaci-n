@@ -16,13 +16,13 @@ export default function Inventory() {
     useEffect(() => { fetchProducts(); }, []);
 
     const fetchProducts = async () => {
-        const res = await fetch('http://localhost:3000/inventory', { headers: { 'Authorization': `Bearer ${getToken()}` } });
+        const res = await fetch('https://sevenelectricmanage.onrender.com/inventory', { headers: { 'Authorization': `Bearer ${getToken()}` } });
         if (res.ok) setProducts(await res.json());
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        const url = editingId ? `http://localhost:3000/inventory/${editingId}` : 'http://localhost:3000/inventory';
+        const url = editingId ? `https://sevenelectricmanage.onrender.com/inventory/${editingId}` : 'https://sevenelectricmanage.onrender.com/inventory';
         const method = editingId ? 'PUT' : 'POST';
         const res = await fetch(url, {
             method, headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getToken()}` },
@@ -45,7 +45,7 @@ export default function Inventory() {
 
     const handleDelete = async (id) => {
         if (!confirm("¿Borrar producto?")) return;
-        await fetch(`http://localhost:3000/inventory/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${getToken()}` } });
+        await fetch(`https://sevenelectricmanage.onrender.com/inventory/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${getToken()}` } });
         fetchProducts();
     };
 

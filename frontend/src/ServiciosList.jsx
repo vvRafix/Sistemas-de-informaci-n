@@ -16,7 +16,7 @@ function ServiciosList() {
   const [enviando, setEnviando] = useState(false);
 
   useEffect(() => {
-    fetch("http://localhost:3000/servicios")
+    fetch("https://sevenelectricmanage.onrender.com/servicios")
       .then((res) => {
         if (!res.ok) throw new Error("Error al cargar servicios");
         return res.json();
@@ -46,7 +46,7 @@ function ServiciosList() {
     }
     setEnviando(true);
     try {
-      const res = await fetch("http://localhost:3000/servicios", {
+      const res = await fetch("https://sevenelectricmanage.onrender.com/servicios", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form)
@@ -67,7 +67,7 @@ function ServiciosList() {
     if (!['cancelado', 'terminado'].includes(motivo)) return;
     if (!window.confirm(`¿Confirma mover el servicio ${id} como '${motivo}'?`)) return;
     try {
-      const res = await fetch(`http://localhost:3000/servicios/${id}?motivo=${encodeURIComponent(motivo)}`, {
+      const res = await fetch(`https://sevenelectricmanage.onrender.com/servicios/${id}?motivo=${encodeURIComponent(motivo)}`, {
         method: 'DELETE'
       });
       if (!res.ok) throw new Error('Error al mover servicio');

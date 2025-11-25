@@ -7,7 +7,7 @@ function CotizacionesList() {
 
   const fetchCotizaciones = () => {
     setLoading(true);
-    fetch('http://localhost:3000/cotizaciones')
+    fetch('https://sevenelectricmanage.onrender.com/cotizaciones')
       .then(res => { if (!res.ok) throw new Error('Error al cargar cotizaciones'); return res.json(); })
       .then(data => { setCotizaciones(data); setLoading(false); })
       .catch(err => { setError(err.message); setLoading(false); });
@@ -17,7 +17,7 @@ function CotizacionesList() {
 
   const cambiarEstado = async (id, nuevoEstado) => {
     try {
-      const res = await fetch(`http://localhost:3000/cotizaciones/${id}/estado`, {
+      const res = await fetch(`https://sevenelectricmanage.onrender.com/cotizaciones/${id}/estado`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ estado: nuevoEstado })
       });
       if (!res.ok) throw new Error('Error al actualizar estado');

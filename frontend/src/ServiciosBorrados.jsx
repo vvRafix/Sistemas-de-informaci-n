@@ -6,7 +6,7 @@ function ServiciosBorrados() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch("http://localhost:3000/servicios-borrados")
+    fetch("https://sevenelectricmanage.onrender.com/servicios-borrados")
       .then((res) => {
         if (!res.ok) throw new Error("Error al cargar servicios borrados");
         return res.json();
@@ -24,7 +24,7 @@ function ServiciosBorrados() {
   const handleDelete = async (id_borrado) => {
     if (!window.confirm("¿Eliminar definitivamente este servicio?")) return;
     try {
-      const res = await fetch(`http://localhost:3000/servicios-borrados/${id_borrado}`, {
+      const res = await fetch(`https://sevenelectricmanage.onrender.com/servicios-borrados/${id_borrado}`, {
         method: "DELETE"
       });
       if (!res.ok) throw new Error("Error al eliminar definitivamente");
@@ -37,7 +37,7 @@ function ServiciosBorrados() {
   const handleRestore = async (id_borrado) => {
     if (!window.confirm("¿Restaurar este servicio desde la papelera?")) return;
     try {
-      const res = await fetch(`http://localhost:3000/servicios-borrados/${id_borrado}/restore`, { method: 'POST' });
+      const res = await fetch(`https://sevenelectricmanage.onrender.com/servicios-borrados/${id_borrado}/restore`, { method: 'POST' });
       if (!res.ok) {
         const text = await res.text();
         throw new Error(text || 'Error al restaurar');
