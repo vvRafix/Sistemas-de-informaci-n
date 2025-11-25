@@ -1,5 +1,6 @@
+require('dotenv').config();
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -8,8 +9,16 @@ const path = require('path');
 const fs = require('fs');
 
 const app = express();
-const PORT = 3000;
-const SECRET_KEY = 'secreto_super_seguro';
+const PORT = process.env.PORT || 3000;
+const SECRET_KEY = process.env.SECRET_KEY || 'secreto_super_seguro';
+
+// Configuración de Conexión a PostgreSQL (Neon/Render/Etc)
+// --- MODIFICACIÓN TEMPORAL ---
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL, // Render llenará esto por nosotros
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+// -----------------------------
 
 // Configuración Uploads
 const uploadDir = path.join(__dirname, 'uploads');
@@ -24,49 +33,58 @@ app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-const db = new sqlite3.Database('./database.sqlite', (err) => {
-    if (err) console.error('Error DB:', err.message);
-    else {
-        console.log('Conectado a SQLite.');
-        initializeDatabase();
-    }
-});
+// --- FUNCIÓN HELPER PARA CONSULTAS ---
+async function query(text, params) {
+    const res = await pool.query(text, params);
+    return res;
+}
 
-function initializeDatabase() {
-    db.serialize(() => {
-        // Tablas Base
-        db.run(`CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE, password TEXT, role TEXT)`);
-        // 2. Reportes Técnicos (AMPLIADA SEGÚN FORMATO DE IMAGEN)
-        db.run(`CREATE TABLE IF NOT EXISTS technical_reports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+// --- INICIALIZACIÓN DE LA BASE DE DATOS ---
+async function initializeDatabase() {
+    console.log("Verificando/Creando tablas en PostgreSQL...");
+    try {
+        // 1. Usuarios
+        await query(`CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY, username TEXT UNIQUE, password TEXT, role TEXT
+        )`);
+
+        // 2. Reportes Técnicos
+        await query(`CREATE TABLE IF NOT EXISTS technical_reports (
+            id SERIAL PRIMARY KEY,
             report_date DATE, client_name TEXT, contact_name TEXT, technician_name TEXT, 
             arrival_time TEXT, departure_time TEXT, equipment_brand TEXT, model TEXT, serial_number TEXT, 
             battery_info TEXT, hour_meter TEXT, machine_status TEXT, 
             symptoms TEXT, causes TEXT, solution TEXT, parts_used TEXT, client_notes TEXT, client_contact_info TEXT,
-            created_by_user_id INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_by_user_id INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )`);
         
-        db.run(`CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-        db.run(`CREATE TABLE IF NOT EXISTS recycle_bin (id INTEGER PRIMARY KEY AUTOINCREMENT, original_id INTEGER, data_json TEXT, deleted_by INTEGER, deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-        db.run(`CREATE TABLE IF NOT EXISTS funds (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, amount REAL, assigned_by INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-        db.run(`CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, description TEXT, amount REAL, expense_date DATE, status TEXT DEFAULT 'pendiente', receipt_url TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-        db.run(`CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, description TEXT, price REAL, stock INTEGER, category TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-        db.run(`CREATE TABLE IF NOT EXISTS quotes (id INTEGER PRIMARY KEY AUTOINCREMENT, client_name TEXT, quote_date DATE, validity_days INTEGER, total_amount REAL, status TEXT DEFAULT 'revision', created_by INTEGER, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-        db.run(`CREATE TABLE IF NOT EXISTS quote_items (id INTEGER PRIMARY KEY AUTOINCREMENT, quote_id INTEGER, product_id INTEGER, description TEXT, quantity INTEGER, unit_price REAL, total REAL)`);
+        // 3. Tablas auxiliares
+        await query(`CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, user_id INTEGER, action TEXT, details TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+        await query(`CREATE TABLE IF NOT EXISTS recycle_bin (id SERIAL PRIMARY KEY, original_id INTEGER, data_json TEXT, deleted_by INTEGER, deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+        
+        // 4. Finanzas
+        await query(`CREATE TABLE IF NOT EXISTS funds (id SERIAL PRIMARY KEY, user_id INTEGER, amount REAL, assigned_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+        await query(`CREATE TABLE IF NOT EXISTS expenses (id SERIAL PRIMARY KEY, user_id INTEGER, description TEXT, amount REAL, expense_date DATE, status TEXT DEFAULT 'pendiente', receipt_url TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+        
+        // 5. Inventario y Cotizaciones
+        await query(`CREATE TABLE IF NOT EXISTS inventory (id SERIAL PRIMARY KEY, name TEXT, description TEXT, price REAL, stock INTEGER, category TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+        await query(`CREATE TABLE IF NOT EXISTS quotes (id SERIAL PRIMARY KEY, client_name TEXT, quote_date DATE, validity_days INTEGER, total_amount REAL, status TEXT DEFAULT 'revision', created_by INTEGER, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`);
+        await query(`CREATE TABLE IF NOT EXISTS quote_items (id SERIAL PRIMARY KEY, quote_id INTEGER, product_id INTEGER, description TEXT, quantity INTEGER, unit_price REAL, total REAL)`);
 
-        // Usuarios default
-        db.get("SELECT count(*) as count FROM users", (err, row) => {
-            if (row && row.count === 0) {
-                const pass = bcrypt.hashSync('Pelot7E123.1', 8);
-                const stmt = db.prepare("INSERT INTO users (username, password, role) VALUES (?, ?, ?)");
-                stmt.run('Luis Felipe', pass, 'admin');
-                stmt.run('tecnico', pass, 'tecnico');
-                stmt.finalize();
-                console.log("Usuarios iniciales creados.");
-            }
-        });
-    });
+        // Usuarios por defecto
+        const res = await query("SELECT count(*) as count FROM users");
+        if (parseInt(res.rows[0].count) === 0) {
+            const pass = bcrypt.hashSync('Pelot7E123.1', 8);
+            await query("INSERT INTO users (username, password, role) VALUES ($1, $2, $3)", ['Luis Felipe', pass, 'admin']);
+            await query("INSERT INTO users (username, password, role) VALUES ($1, $2, $3)", ['tecnico', pass, 'tecnico']);
+            console.log("Usuarios iniciales creados.");
+        }
+    } catch (err) {
+        console.error("Error al inicializar DB:", err);
+    }
 }
+
+initializeDatabase();
 
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -80,40 +98,43 @@ const verifyToken = (req, res, next) => {
 };
 
 // --- RUTAS ---
-app.post('/login', (req, res) => {
+
+// Login
+app.post('/login', async (req, res) => {
     const { username, password } = req.body;
-    db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
+    try {
+        const result = await query("SELECT * FROM users WHERE username = $1", [username]);
+        const user = result.rows[0];
         if (!user || !bcrypt.compareSync(password, user.password)) return res.status(401).json({ message: "Credenciales incorrectas" });
         const token = jwt.sign({ id: user.id, role: user.role, username: user.username }, SECRET_KEY, { expiresIn: '24h' });
         res.json({ token, role: user.role });
-    });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ==========================================
-// 1. MÓDULO REPORTES TÉCNICOS
-// ==========================================
-app.get('/reports', verifyToken, (req, res) => {
-    let query = `SELECT tr.*, u.username as author_system FROM technical_reports tr LEFT JOIN users u ON tr.created_by_user_id = u.id`;
+// 1. Reportes Técnicos
+app.get('/reports', verifyToken, async (req, res) => {
+    let sql = `SELECT tr.*, u.username as author_system FROM technical_reports tr LEFT JOIN users u ON tr.created_by_user_id = u.id`;
     let params = [];
-    if (req.user.role === 'tecnico') { query += ` WHERE tr.created_by_user_id=${req.user.id}`; }
-    query += " ORDER BY tr.created_at DESC";
-    db.all(query, params, (err, rows) => { if(err) return res.status(500).json({error: err.message}); res.json(rows); });
+    if (req.user.role === 'tecnico') { sql += ` WHERE tr.created_by_user_id=$1`; params.push(req.user.id); }
+    sql += " ORDER BY tr.created_at DESC";
+    try {
+        const result = await query(sql, params);
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({error: err.message}); }
 });
 
-app.post('/reports', verifyToken, (req, res) => {
+app.post('/reports', verifyToken, async (req, res) => {
     const data = req.body;
-    
-    // SQL con todos los nuevos campos del formulario (report_date, contact_name, etc.)
     const sql = `
         INSERT INTO technical_reports (
             report_date, client_name, contact_name, technician_name, 
             arrival_time, departure_time, equipment_brand, model, serial_number, 
             battery_info, hour_meter, machine_status, symptoms, causes, 
             solution, parts_used, client_notes, client_contact_info, created_by_user_id
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+        RETURNING id
     `;
-    
-    // Parámetros para la inserción (deben coincidir con el orden de la SQL)
+    // Nota: Aquí se esperan los nombres cortos del frontend corregido
     const params = [
         data.date, data.client, data.contact, data.tech_name,
         data.arrival, data.departure, data.brand, data.model, data.serial,
@@ -121,369 +142,306 @@ app.post('/reports', verifyToken, (req, res) => {
         data.solution, data.parts, data.client_notes, data.client_contact, req.user.id
     ];
 
-    db.run(sql, params, function(err) {
-        if(err) {
-             console.error("Error SQL al guardar reporte:", err);
-             return res.status(500).json({error: "Fallo de DB: " + err.message});
-        }
-        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'CREAR_INFORME', `Informe ID ${this.lastID} (Serie: ${data.serial})`]);
-        res.status(201).json({success:true, id: this.lastID});
-    });
+    try {
+        const result = await query(sql, params);
+        const newId = result.rows[0].id;
+        await query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, 'CREAR_INFORME', `Informe ID ${newId} (Serie: ${data.serial})`]);
+        res.status(201).json({success:true, id: newId});
+    } catch(err) {
+        console.error("Error SQL:", err);
+        res.status(500).json({error: "Fallo de DB: " + err.message});
+    }
 });
 
-app.put('/reports/:id', verifyToken, (req, res) => {
+app.put('/reports/:id', verifyToken, async (req, res) => {
     const data = req.body;
-    const sql = `UPDATE technical_reports SET report_date=?, client_name=?, contact_name=?, technician_name=?, arrival_time=?, departure_time=?, equipment_brand=?, model=?, serial_number=?, battery_info=?, hour_meter=?, machine_status=?, symptoms=?, causes=?, solution=?, parts_used=?, client_notes=?, client_contact_info=? WHERE id=?`;
+    const sql = `UPDATE technical_reports SET report_date=$1, client_name=$2, contact_name=$3, technician_name=$4, arrival_time=$5, departure_time=$6, equipment_brand=$7, model=$8, serial_number=$9, battery_info=$10, hour_meter=$11, machine_status=$12, symptoms=$13, causes=$14, solution=$15, parts_used=$16, client_notes=$17, client_contact_info=$18 WHERE id=$19`;
     const params = [data.date, data.client, data.contact, data.tech_name, data.arrival, data.departure, data.brand, data.model, data.serial, data.battery, data.hour_meter, data.status, data.symptoms, data.causes, data.solution, data.parts, data.client_notes, data.client_contact, req.params.id];
-    db.run(sql, params, function(err) {
-        if(err) return res.status(500).json({error: err.message});
+    try {
+        await query(sql, params);
         res.json({success:true});
-    });
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-app.delete('/reports/:id', verifyToken, (req, res) => {
-    db.get("SELECT * FROM technical_reports WHERE id=?", [req.params.id], (err, item) => {
+app.delete('/reports/:id', verifyToken, async (req, res) => {
+    try {
+        const result = await query("SELECT * FROM technical_reports WHERE id=$1", [req.params.id]);
+        const item = result.rows[0];
         if(!item) return res.status(404).json({error:"No encontrado"});
-        db.run("INSERT INTO recycle_bin (original_id, data_json, deleted_by) VALUES (?,?,?)", [item.id, JSON.stringify(item), req.user.id]);
-        db.run("DELETE FROM technical_reports WHERE id=?", [req.params.id], (err)=>{
-            db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'BORRAR_INFORME', `ID: ${req.params.id}`]);
-            res.json({success:true});
-        });
-    });
+        
+        await query("INSERT INTO recycle_bin (original_id, data_json, deleted_by) VALUES ($1,$2,$3)", [item.id, JSON.stringify(item), req.user.id]);
+        await query("DELETE FROM technical_reports WHERE id=$1", [req.params.id]);
+        await query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, 'BORRAR_INFORME', `ID: ${req.params.id}`]);
+        res.json({success:true});
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-// ==========================================
-// 2. MÓDULO HISTORIAL MÁQUINAS (MULTI-SEARCH APLICADO)
-// ==========================================
-// [Actualizar esta única ruta]
-app.get('/machines/suggestions', verifyToken, (req, res) => {
+// 2. Historial Máquinas
+app.get('/machines/suggestions', verifyToken, async (req, res) => {
     const q = req.query.q;
     if (!q) return res.json([]);
-    
-    // **NUEVA LÓGICA:** Selecciona Cliente, Técnico y Serie
-    const sql = `
-        SELECT DISTINCT serial_number, client_name, technician_name 
-        FROM technical_reports 
-        WHERE serial_number LIKE ? OR client_name LIKE ? OR technician_name LIKE ?
-        LIMIT 5
-    `;
-    const searchParam = `%${q}%`;
-
-    db.all(sql, [searchParam, searchParam, searchParam], (err, rows) => {
-        if (err) return res.status(500).json({error: err.message});
-        // Devuelve el objeto completo para tener contexto en el Frontend
-        res.json(rows);
-    });
+    const sql = `SELECT DISTINCT serial_number, client_name, technician_name FROM technical_reports WHERE serial_number ILIKE $1 OR client_name ILIKE $2 OR technician_name ILIKE $3 LIMIT 5`;
+    const p = `%${q}%`;
+    try {
+        const result = await query(sql, [p, p, p]);
+        res.json(result.rows);
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-app.get('/history/:serial', verifyToken, (req, res) => {
-    // La consulta ahora trae TODAS las columnas que necesita el PDF
-    const sql = `
-        SELECT *
-        FROM technical_reports 
-        WHERE serial_number = ? 
-        ORDER BY report_date DESC
-    `;
-    db.all(sql, [req.params.serial], (err, rows) => { 
-        if(err) return res.status(500).json({error: err.message});
-        res.json(rows);
-    });
+app.get('/history/:serial', verifyToken, async (req, res) => {
+    try {
+        const result = await query("SELECT * FROM technical_reports WHERE serial_number = $1 ORDER BY report_date DESC", [req.params.serial]);
+        res.json(result.rows);
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-// ==========================================
-// 3. MÓDULO FINANZAS (GASTOS)
-// ==========================================
-app.get('/finance/summary', verifyToken, (req, res) => {
-    const userId = req.user.id;
-    db.get("SELECT SUM(amount) as total FROM funds WHERE user_id = ?", [userId], (err, funds) => {
-        db.get("SELECT SUM(amount) as total FROM expenses WHERE user_id = ? AND status != 'rechazado'", [userId], (err, exps) => {
-            res.json({ assigned: funds?.total || 0, spent: exps?.total || 0, balance: (funds?.total || 0) - (exps?.total || 0) });
-        });
-    });
+// 3. Finanzas
+app.get('/finance/summary', verifyToken, async (req, res) => {
+    try {
+        const fundsRes = await query("SELECT SUM(amount) as total FROM funds WHERE user_id = $1", [req.user.id]);
+        const expsRes = await query("SELECT SUM(amount) as total FROM expenses WHERE user_id = $1 AND status != 'rechazado'", [req.user.id]);
+        const assigned = fundsRes.rows[0].total || 0;
+        const spent = expsRes.rows[0].total || 0;
+        res.json({ assigned, spent, balance: assigned - spent });
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-app.get('/finance/admin-overview', verifyToken, (req, res) => {
+app.get('/finance/admin-overview', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({error: "Acceso denegado"});
     const sql = `SELECT u.id, u.username, COALESCE((SELECT SUM(amount) FROM funds WHERE user_id = u.id), 0) as total_assigned, COALESCE((SELECT SUM(amount) FROM expenses WHERE user_id = u.id AND status != 'rechazado'), 0) as total_spent FROM users u WHERE u.role != 'admin'`;
-    db.all(sql, [], (err, rows) => {
-        res.json(rows.map(r => ({ ...r, balance: r.total_assigned - r.total_spent })));
-    });
+    try {
+        const result = await query(sql);
+        res.json(result.rows.map(r => ({ ...r, balance: r.total_assigned - r.total_spent })));
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-app.post('/finance/funds', verifyToken, (req, res) => {
+app.post('/finance/funds', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({error: "Acceso denegado"});
     const { target_user_id, amount } = req.body;
-    if (amount === 0 || !amount) return res.status(400).json({error: "Monto inválido"});
-    db.run("INSERT INTO funds (user_id, amount, assigned_by) VALUES (?,?,?)", [target_user_id, amount, req.user.id], function(err){
-        if(err) return res.status(500).json({error:err.message});
+    try {
+        await query("INSERT INTO funds (user_id, amount, assigned_by) VALUES ($1,$2,$3)", [target_user_id, amount, req.user.id]);
         const accion = amount > 0 ? 'ASIGNAR_FONDO' : 'DESCONTAR_FONDO';
-        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, accion, `Monto: $${amount} a usuario ID ${target_user_id}`]);
+        await query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, accion, `Monto: $${amount} a usuario ID ${target_user_id}`]);
         res.json({success: true});
-    });
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-app.post('/expenses', verifyToken, upload.single('receipt'), (req, res) => {
+app.post('/expenses', verifyToken, upload.single('receipt'), async (req, res) => {
     const { description, amount, date } = req.body;
     const receiptUrl = req.file ? `/uploads/${req.file.filename}` : null;
-    if(!amount || amount <= 0) return res.status(400).json({error: "Monto inválido"});
-    
-    const stmt = db.prepare("INSERT INTO expenses (user_id, description, amount, expense_date, receipt_url) VALUES (?,?,?,?,?)");
-    stmt.run(req.user.id, description, amount, date, receiptUrl, function(err){
-        if(err) return res.status(500).json({error: err.message});
-        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'RENDIR_GASTO', `Monto: $${amount}`]);
-        res.json({success: true, id: this.lastID});
-    });
+    try {
+        const result = await query("INSERT INTO expenses (user_id, description, amount, expense_date, receipt_url) VALUES ($1,$2,$3,$4,$5) RETURNING id", [req.user.id, description, amount, date, receiptUrl]);
+        await query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, 'RENDIR_GASTO', `Monto: $${amount}`]);
+        res.json({success: true, id: result.rows[0].id});
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-app.get('/expenses', verifyToken, (req, res) => {
+app.get('/expenses', verifyToken, async (req, res) => {
     let sql = `SELECT e.*, u.username FROM expenses e LEFT JOIN users u ON e.user_id = u.id`;
     let params = [];
-    if (req.user.role === 'tecnico') { sql += " WHERE e.user_id = ?"; params.push(req.user.id); }
-    else if (req.user.role === 'admin' && req.query.user_id) { sql += " WHERE e.user_id = ?"; params.push(req.query.user_id); }
+    if (req.user.role === 'tecnico') { sql += " WHERE e.user_id = $1"; params.push(req.user.id); }
+    else if (req.user.role === 'admin' && req.query.user_id) { sql += " WHERE e.user_id = $1"; params.push(req.query.user_id); }
     sql += " ORDER BY e.expense_date DESC";
-    db.all(sql, params, (err, rows) => res.json(rows));
+    try {
+        const result = await query(sql, params);
+        res.json(result.rows);
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-app.put('/expenses/:id/status', verifyToken, (req, res) => {
+app.put('/expenses/:id/status', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({error: "Acceso denegado"});
-    db.run("UPDATE expenses SET status = ? WHERE id = ?", [req.body.status, req.params.id], (err) => {
-        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'REVISAR_GASTO', `Estado: ${req.body.status}`]);
+    try {
+        await query("UPDATE expenses SET status = $1 WHERE id = $2", [req.body.status, req.params.id]);
+        await query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, 'REVISAR_GASTO', `Estado: ${req.body.status}`]);
         res.json({success: true});
-    });
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-// ==========================================
-// 4. MÓDULO INVENTARIO Y COTIZACIONES
-// ==========================================
-app.get('/inventory', verifyToken, (req, res) => db.all("SELECT * FROM inventory ORDER BY name ASC", [], (err, rows) => res.json(rows)));
-
-app.post('/inventory', verifyToken, (req, res) => {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
-    const { name, description, price, stock, category } = req.body;
-    db.run("INSERT INTO inventory (name, description, price, stock, category) VALUES (?, ?, ?, ?, ?)", [name, description, price, stock, category], function(err) {
-        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'CREAR_PRODUCTO', `Producto: ${name}`]);
-        res.json({ success: true, id: this.lastID });
-    });
+// 4. Inventario
+app.get('/inventory', verifyToken, async (req, res) => {
+    try {
+        const result = await query("SELECT * FROM inventory ORDER BY name ASC");
+        res.json(result.rows);
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-app.put('/inventory/:id', verifyToken, (req, res) => {
+app.post('/inventory', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
     const { name, description, price, stock, category } = req.body;
-    db.run("UPDATE inventory SET name=?, description=?, price=?, stock=?, category=? WHERE id=?", [name, description, price, stock, category, req.params.id], function(err) {
-        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'EDITAR_PRODUCTO', `ID: ${req.params.id}`]);
+    try {
+        const result = await query("INSERT INTO inventory (name, description, price, stock, category) VALUES ($1, $2, $3, $4, $5) RETURNING id", [name, description, price, stock, category]);
+        await query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, 'CREAR_PRODUCTO', `Producto: ${name}`]);
+        res.json({ success: true, id: result.rows[0].id });
+    } catch(err) { res.status(500).json({error: err.message}); }
+});
+
+app.put('/inventory/:id', verifyToken, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
+    const { name, description, price, stock, category } = req.body;
+    try {
+        await query("UPDATE inventory SET name=$1, description=$2, price=$3, stock=$4, category=$5 WHERE id=$6", [name, description, price, stock, category, req.params.id]);
+        await query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, 'EDITAR_PRODUCTO', `ID: ${req.params.id}`]);
         res.json({ success: true });
-    });
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-app.delete('/inventory/:id', verifyToken, (req, res) => {
+app.delete('/inventory/:id', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
-    db.get("SELECT * FROM inventory WHERE id=?", [req.params.id], (err, item) => {
+    try {
+        const result = await query("SELECT * FROM inventory WHERE id=$1", [req.params.id]);
+        const item = result.rows[0];
         if(!item) return res.status(404).json({error: "No encontrado"});
-        db.run("INSERT INTO recycle_bin (original_id, data_json, deleted_by) VALUES (?,?,?)", [item.id, JSON.stringify(item), req.user.id]);
-        db.run("DELETE FROM inventory WHERE id=?", [req.params.id], (err) => {
-            db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'BORRAR_PRODUCTO', `ID: ${req.params.id}`]);
-            res.json({ success: true });
-        });
-    });
+        
+        await query("INSERT INTO recycle_bin (original_id, data_json, deleted_by) VALUES ($1,$2,$3)", [item.id, JSON.stringify(item), req.user.id]);
+        await query("DELETE FROM inventory WHERE id=$1", [req.params.id]);
+        await query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, 'BORRAR_PRODUCTO', `ID: ${req.params.id}`]);
+        res.json({ success: true });
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-// Cotizaciones (Con transacción segura para ítems)
-app.get('/quotes', verifyToken, (req, res) => {
+// 5. Cotizaciones (Con Transacciones)
+app.get('/quotes', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
-    db.all("SELECT q.*, u.username as author FROM quotes q LEFT JOIN users u ON q.created_by = u.id ORDER BY q.created_at DESC", [], (err, rows) => res.json(rows));
+    try {
+        const result = await query("SELECT q.*, u.username as author FROM quotes q LEFT JOIN users u ON q.created_by = u.id ORDER BY q.created_at DESC");
+        res.json(result.rows);
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-app.get('/quotes/:id', verifyToken, (req, res) => {
+app.get('/quotes/:id', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
-    db.get("SELECT * FROM quotes WHERE id=?", [req.params.id], (err, quote) => {
+    try {
+        const quoteRes = await query("SELECT * FROM quotes WHERE id=$1", [req.params.id]);
+        const quote = quoteRes.rows[0];
         if (!quote) return res.status(404).json({error: "No encontrada"});
-        db.all("SELECT * FROM quote_items WHERE quote_id = ?", [req.params.id], (err, items) => res.json({ ...quote, items }));
-    });
+        const itemsRes = await query("SELECT * FROM quote_items WHERE quote_id = $1", [req.params.id]);
+        res.json({ ...quote, items: itemsRes.rows });
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-app.post('/quotes', verifyToken, (req, res) => {
+app.post('/quotes', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
     const { client_name, quote_date, validity_days, items, total_amount } = req.body;
-    if (!items || items.length === 0) return res.status(400).json({error: "Sin ítems"});
-
-    db.serialize(() => {
-        db.run("INSERT INTO quotes (client_name, quote_date, validity_days, total_amount, created_by) VALUES (?, ?, ?, ?, ?)", 
-            [client_name, quote_date, validity_days, total_amount, req.user.id], 
-            function(err) {
-                if (err) return res.status(500).json({error: err.message});
-                const quoteId = this.lastID;
-                const stmt = db.prepare("INSERT INTO quote_items (quote_id, product_id, description, quantity, unit_price, total) VALUES (?, ?, ?, ?, ?, ?)");
-                
-                const inserts = items.map(i => new Promise((resolve, reject) => {
-                    stmt.run(quoteId, i.product_id || null, i.description, i.quantity, i.unit_price, (i.quantity * i.unit_price), (err) => {
-                        if(err) reject(err); else resolve();
-                    });
-                }));
-
-                Promise.all(inserts).then(() => {
-                    stmt.finalize();
-                    db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'CREAR_COTIZACION', `ID: ${quoteId}`]);
-                    res.status(201).json({ success: true, id: quoteId });
-                }).catch(e => {
-                    stmt.finalize();
-                    res.status(500).json({ error: "Error items" });
-                });
-            }
-        );
-    });
-});
-
-app.put('/quotes/:id/approve', verifyToken, (req, res) => {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
-    const quoteId = req.params.id;
     
-    db.all("SELECT * FROM quote_items WHERE quote_id = ?", [quoteId], (err, items) => {
-        if(items.length === 0) return res.status(400).json({error: "Cotización vacía"});
-        
-        // Validar Stock
-        const checks = items.map(i => new Promise((resolve, reject) => {
-            if (!i.product_id) return resolve();
-            db.get("SELECT stock, name FROM inventory WHERE id=?", [i.product_id], (err, p) => {
-                if (err) reject(err); else if (!p || p.stock < i.quantity) reject(`Falta stock: ${p?p.name:'?'}`); else resolve();
-            });
-        }));
+    const client = await pool.connect(); // Cliente para transacción
+    try {
+        await client.query('BEGIN');
+        const insertQuote = "INSERT INTO quotes (client_name, quote_date, validity_days, total_amount, created_by) VALUES ($1, $2, $3, $4, $5) RETURNING id";
+        const resQuote = await client.query(insertQuote, [client_name, quote_date, validity_days, total_amount, req.user.id]);
+        const quoteId = resQuote.rows[0].id;
 
-        Promise.all(checks).then(() => {
-            const stmt = db.prepare("UPDATE inventory SET stock = stock - ? WHERE id = ?");
-            items.forEach(i => { if (i.product_id) stmt.run(i.quantity, i.product_id); });
-            stmt.finalize();
-            db.run("UPDATE quotes SET status = 'aprobada' WHERE id = ?", [quoteId], (err) => {
-                db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'APROBAR_COTIZACION', `ID: ${quoteId}`]);
-                res.json({ success: true });
-            });
-        }).catch(e => res.status(400).json({ error: e }));
-    });
+        for (const i of items) {
+            await client.query(
+                "INSERT INTO quote_items (quote_id, product_id, description, quantity, unit_price, total) VALUES ($1, $2, $3, $4, $5, $6)",
+                [quoteId, i.product_id || null, i.description, i.quantity, i.unit_price, (i.quantity * i.unit_price)]
+            );
+        }
+
+        await client.query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, 'CREAR_COTIZACION', `ID: ${quoteId}`]);
+        await client.query('COMMIT');
+        res.status(201).json({ success: true, id: quoteId });
+    } catch (e) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: e.message });
+    } finally {
+        client.release();
+    }
 });
 
-app.put('/quotes/:id/revert', verifyToken, (req, res) => {
+app.put('/quotes/:id/approve', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
-    const quoteId = req.params.id;
-    db.all("SELECT * FROM quote_items WHERE quote_id = ?", [quoteId], (err, items) => {
-        const stmt = db.prepare("UPDATE inventory SET stock = stock + ? WHERE id = ?");
-        items.forEach(i => { if (i.product_id) stmt.run(i.quantity, i.product_id); });
-        stmt.finalize();
-        db.run("UPDATE quotes SET status = 'revision' WHERE id = ?", [quoteId], (err) => {
-            db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'REVERTIR_COTIZACION', `ID: ${quoteId}`]);
-            res.json({ success: true });
-        });
-    });
-});
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const itemsRes = await client.query("SELECT * FROM quote_items WHERE quote_id = $1", [req.params.id]);
+        const items = itemsRes.rows;
 
-app.delete('/quotes/:id', verifyToken, (req, res) => {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
-    db.run("DELETE FROM quotes WHERE id = ?", [req.params.id], (err) => {
-        db.run("DELETE FROM quote_items WHERE quote_id = ?", [req.params.id]);
-        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'BORRAR_COTIZACION', `ID: ${req.params.id}`]);
+        for (const i of items) {
+            if (i.product_id) {
+                const prodRes = await client.query("SELECT stock, name FROM inventory WHERE id=$1", [i.product_id]);
+                const prod = prodRes.rows[0];
+                if (!prod || prod.stock < i.quantity) throw new Error(`Falta stock: ${prod ? prod.name : '?'}`);
+                await client.query("UPDATE inventory SET stock = stock - $1 WHERE id = $2", [i.quantity, i.product_id]);
+            }
+        }
+
+        await client.query("UPDATE quotes SET status = 'aprobada' WHERE id = $1", [req.params.id]);
+        await client.query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, 'APROBAR_COTIZACION', `ID: ${req.params.id}`]);
+        await client.query('COMMIT');
         res.json({ success: true });
-    });
+    } catch (e) {
+        await client.query('ROLLBACK');
+        res.status(400).json({ error: e.message });
+    } finally {
+        client.release();
+    }
+});
+
+app.put('/quotes/:id/revert', verifyToken, async (req, res) => {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: "Solo admin" });
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const itemsRes = await client.query("SELECT * FROM quote_items WHERE quote_id = $1", [req.params.id]);
+        for (const i of itemsRes.rows) {
+            if (i.product_id) {
+                await client.query("UPDATE inventory SET stock = stock + $1 WHERE id = $2", [i.quantity, i.product_id]);
+            }
+        }
+        await client.query("UPDATE quotes SET status = 'revision' WHERE id = $1", [req.params.id]);
+        await client.query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, 'REVERTIR_COTIZACION', `ID: ${req.params.id}`]);
+        await client.query('COMMIT');
+        res.json({ success: true });
+    } catch(e) {
+        await client.query('ROLLBACK');
+        res.status(500).json({ error: e.message });
+    } finally {
+        client.release();
+    }
 });
 
 // Admin & Utilidades
-app.get('/users', verifyToken, (req, res) => db.all("SELECT id, username, role FROM users", [], (err, rows) => res.json(rows)));
-app.get('/audit-logs', verifyToken, (req, res) => db.all("SELECT al.*, u.username FROM audit_logs al LEFT JOIN users u ON al.user_id = u.id ORDER BY al.timestamp DESC", [], (err, rows) => res.json(rows)));
-app.get('/recycle-bin', verifyToken, (req, res) => db.all("SELECT rb.*, u.username as deleted_by_user FROM recycle_bin rb LEFT JOIN users u ON rb.deleted_by = u.id ORDER BY rb.deleted_at DESC", [], (err, rows) => res.json(rows.map(r => ({ ...r, data: JSON.parse(r.data_json) })))));
-app.post('/recycle-bin/restore/:id', verifyToken, (req, res) => {
-    db.get("SELECT * FROM recycle_bin WHERE id=?", [req.params.id], (err, item) => {
-        if(!item) return res.status(404).json({error:"No existe"});
-        const d = JSON.parse(item.data_json);
-        // Restaurar genérico
-        if(d.client_name && d.serial_number) {
-             db.run("INSERT INTO technical_reports (id, client_name, machine_model, serial_number, failure_description, repair_details, technician_id, created_at) VALUES (?,?,?,?,?,?,?,?)", [d.id, d.client_name, d.machine_model, d.serial_number, d.failure_description, d.repair_details, d.technician_id, d.created_at]);
-        }
-        db.run("DELETE FROM recycle_bin WHERE id=?", [req.params.id]);
-        res.json({success:true});
-    });
+app.get('/users', verifyToken, async (req, res) => {
+    try {
+        const result = await query("SELECT id, username, role FROM users");
+        res.json(result.rows);
+    } catch(err) { res.status(500).json({error: err.message}); }
 });
 
-// ADMIN: gestionar usuarios (crear, editar, eliminar)
-app.post('/users', verifyToken, (req, res) => {
+app.get('/audit-logs', verifyToken, async (req, res) => {
+    try {
+        const result = await query("SELECT al.*, u.username FROM audit_logs al LEFT JOIN users u ON al.user_id = u.id ORDER BY al.timestamp DESC");
+        res.json(result.rows);
+    } catch(err) { res.status(500).json({error: err.message}); }
+});
+
+app.post('/users', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: "Acceso denegado" });
     const { username, password, role } = req.body;
-    if (!username || !password) return res.status(400).json({ error: "Faltan campos" });
     const userRole = role === 'admin' ? 'admin' : 'tecnico';
     const hashed = bcrypt.hashSync(password, 8);
-
-    db.run("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", [username, hashed, userRole], function(err) {
-        if (err) {
-            if (err.message && err.message.toLowerCase().includes('unique')) return res.status(400).json({ error: "Usuario ya existe" });
-            return res.status(500).json({ error: err.message });
-        }
-        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'CREAR_USUARIO', `ID: ${this.lastID} - ${username}`]);
-        res.status(201).json({ success: true, id: this.lastID });
-    });
+    try {
+        const result = await query("INSERT INTO users (username, password, role) VALUES ($1, $2, $3) RETURNING id", [username, hashed, userRole]);
+        await query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, 'CREAR_USUARIO', `ID: ${result.rows[0].id} - ${username}`]);
+        res.status(201).json({ success: true, id: result.rows[0].id });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.put('/users/:id', verifyToken, (req, res) => {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: "Acceso denegado" });
-    const id = req.params.id;
-    const { username, password, role } = req.body;
-    if (!username && !password && !role) return res.status(400).json({ error: "Nada para actualizar" });
-
-    // Construir SET dinámico
-    const fields = [];
-    const params = [];
-    if (username) { fields.push("username = ?"); params.push(username); }
-    if (password) { fields.push("password = ?"); params.push(bcrypt.hashSync(password, 8)); }
-    if (role) { fields.push("role = ?"); params.push(role === 'admin' ? 'admin' : 'tecnico'); }
-    params.push(id);
-
-    const sql = `UPDATE users SET ${fields.join(', ')} WHERE id = ?`;
-    db.run(sql, params, function(err) {
-        if (err) {
-            if (err.message && err.message.toLowerCase().includes('unique')) return res.status(400).json({ error: "Usuario ya existe" });
-            return res.status(500).json({ error: err.message });
-        }
-        db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'EDITAR_USUARIO', `ID: ${id}`]);
-        res.json({ success: true });
-    });
-});
-
-app.delete('/users/:id', verifyToken, (req, res) => {
+app.delete('/users/:id', verifyToken, async (req, res) => {
     if (req.user.role !== 'admin') return res.status(403).json({ error: "Acceso denegado" });
     const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) return res.status(400).json({ error: "ID inválido" });
     if (id === req.user.id) return res.status(400).json({ error: "No puedes eliminarte a ti mismo" });
 
-    db.get("SELECT * FROM users WHERE id = ?", [id], (err, user) => {
-        if (err) return res.status(500).json({ error: err.message });
+    try {
+        const userRes = await query("SELECT * FROM users WHERE id = $1", [id]);
+        const user = userRes.rows[0];
         if (!user) return res.status(404).json({ error: "No encontrado" });
 
-        if (user.role === 'admin') {
-            db.get("SELECT COUNT(*) as cnt FROM users WHERE role = 'admin'", [], (err, row) => {
-                if (err) return res.status(500).json({ error: err.message });
-                if (row && row.cnt <= 1) return res.status(400).json({ error: "No se puede eliminar el último admin" });
-                proceedDelete(user);
-            });
-        } else proceedDelete(user);
-
-        function proceedDelete(user) {
-            db.run("INSERT INTO recycle_bin (original_id, data_json, deleted_by) VALUES (?,?,?)", [user.id, JSON.stringify(user), req.user.id], (err) => {
-                if (err) return res.status(500).json({ error: err.message });
-                db.run("DELETE FROM users WHERE id = ?", [id], function(err) {
-                    if (err) return res.status(500).json({ error: err.message });
-                    db.run("INSERT INTO audit_logs (user_id, action, details) VALUES (?, ?, ?)", [req.user.id, 'BORRAR_USUARIO', `ID: ${id} - ${user.username}`]);
-                    res.json({ success: true });
-                });
-            });
-        }
-    });
-});
-// Reset
-app.get('/emergency-reset', (req, res) => {
-    db.serialize(() => {
-        db.run("DROP TABLE IF EXISTS users"); db.run("DROP TABLE IF EXISTS technical_reports"); 
-        db.run("DROP TABLE IF EXISTS audit_logs"); db.run("DROP TABLE IF EXISTS recycle_bin"); 
-        db.run("DROP TABLE IF EXISTS funds"); db.run("DROP TABLE IF EXISTS expenses");
-        db.run("DROP TABLE IF EXISTS quotes"); db.run("DROP TABLE IF EXISTS quote_items");
-        db.run("DROP TABLE IF EXISTS inventory");
-        initializeDatabase();
-        res.json({ message: "Reset Completo V7 (Final SQLite)" });
-    });
+        await query("INSERT INTO recycle_bin (original_id, data_json, deleted_by) VALUES ($1,$2,$3)", [user.id, JSON.stringify(user), req.user.id]);
+        await query("DELETE FROM users WHERE id = $1", [id]);
+        await query("INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)", [req.user.id, 'BORRAR_USUARIO', `ID: ${id}`]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-app.listen(PORT, () => console.log(`Servidor listo en http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`Servidor PostgreSQL listo en puerto ${PORT}`));
